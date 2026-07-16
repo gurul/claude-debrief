@@ -1,0 +1,96 @@
+{
+  "generatedNote": "EXAMPLE FIXTURE — hand-written so a fresh clone renders a populated graph before you have any memory of your own. Real runs overwrite this file: configure .system/repos.json, then `node .system/build-provenance.mjs` derives it from git (numstat + hunk-header function context), curated by each debrief's `touched:`/`commits:` frontmatter.",
+  "builtFrom": "example",
+  "sessions": [
+    {
+      "docId": "2026-01-05-payments-retry-loop.md",
+      "date": "2026-01-05",
+      "title": "Payments retry loop — idempotency keys before retries",
+      "prs": { "acme-api": ["412"] },
+      "repos": [
+        {
+          "repo": "acme-api",
+          "shas": ["9c81346", "9bdcdc9"],
+          "files": [
+            {
+              "path": "src/payments/charge.ts",
+              "adds": 84,
+              "dels": 31,
+              "functions": ["chargeCard", "buildIdempotencyKey", "retryWithBackoff"]
+            },
+            {
+              "path": "src/payments/webhook.ts",
+              "adds": 22,
+              "dels": 4,
+              "functions": ["handleStripeEvent"]
+            },
+            {
+              "path": "test/payments/charge.test.ts",
+              "adds": 61,
+              "dels": 0,
+              "functions": ["describe"]
+            }
+          ],
+          "fileCount": 3,
+          "fnCount": 5
+        },
+        {
+          "repo": "acme-worker",
+          "shas": ["68a6083"],
+          "files": [
+            {
+              "path": "jobs/reconcile.ts",
+              "adds": 17,
+              "dels": 9,
+              "functions": ["reconcileCharges"]
+            }
+          ],
+          "fileCount": 1,
+          "fnCount": 1
+        }
+      ]
+    },
+    {
+      "docId": "2026-01-04-auth-session-cutover.md",
+      "date": "2026-01-04",
+      "title": "Auth session cutover — cookies over localStorage tokens",
+      "prs": { "acme-api": ["405", "406"] },
+      "repos": [
+        {
+          "repo": "acme-api",
+          "shas": ["3d46771"],
+          "files": [
+            {
+              "path": "src/auth/login.ts",
+              "adds": 53,
+              "dels": 48,
+              "functions": ["signIn", "issueSession"]
+            },
+            {
+              "path": "src/auth/middleware.ts",
+              "adds": 29,
+              "dels": 12,
+              "functions": ["requireSession"]
+            }
+          ],
+          "fileCount": 2,
+          "fnCount": 3
+        },
+        {
+          "repo": "acme-web",
+          "shas": ["ba606d6"],
+          "files": [
+            {
+              "path": "app/routes/login.tsx",
+              "adds": 40,
+              "dels": 66,
+              "functions": ["LoginRoute", "useSession"]
+            }
+          ],
+          "fileCount": 1,
+          "fnCount": 2
+        }
+      ]
+    }
+  ]
+}

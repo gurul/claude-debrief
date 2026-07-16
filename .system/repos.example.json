@@ -1,0 +1,8 @@
+{
+  "//": "Copy to repos.json. Which working copies this memory spans: repo name -> path, resolved relative to debrief/ (so '..' is the host repo, '../../peer' a sibling checkout). Absolute paths are allowed. The name is what a debrief's `touched:`/`commits:` frontmatter resolves against, and what the graph labels a repo node. Repos listed here but missing on disk are skipped, so one config can cover a team whose members have different subsets checked out.",
+  "repos": {
+    "my-app": "..",
+    "my-api": "../../my-api",
+    "my-worker": "../../my-worker"
+  }
+}

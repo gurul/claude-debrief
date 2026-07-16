@@ -1,0 +1,8 @@
+# This repo ships the machinery. A live install's memory must never land here.
+sessions/
+.system/hook.log
+.system/repos.json
+.system/.repair.lock
+node_modules/
+dist/
+.DS_Store
