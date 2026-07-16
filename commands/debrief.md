@@ -29,6 +29,7 @@ Date defaults to today. This is the **curation gate** — the human-quality pass
 3. **Review with the human.** Present the synthesized debrief and iterate on corrections before finalizing. Ask specifically about anything the drafts marked unverified. This step *is* the system — do not skip it.
 4. **Update `debrief/INDEX.md`** per its own convention: add a newest-first table row (date, slug link, TL;DR hook, key entities); fold new entities into the glossary (rewire existing nodes toward corrected understanding rather than duplicating); promote a principle only if it now recurs in ≥2 debriefs.
 5. **Archive.** Move consumed session drafts to `debrief/sessions/archive/<date>/` and rewrite the matching `queue.jsonl` entries with `"status": "aggregated"`.
+6. **Promote durable expertise (if the repo has a structured expertise store, e.g. a `.mulch/`).** For each of the day's observations ask: *would a teammate's agent, on a fresh clone, be worse off without this?* Yes → record it (`ml record <domain> --type ...`; failures with resolutions are the highest-value type). No → it stays in the debrief. Most notes don't graduate — session state, dead ends, and open threads belong here, not there. See README "Composing with a structured expertise layer".
 
 ## Both modes
 

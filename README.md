@@ -39,6 +39,33 @@ gate between them is the entire design.
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
 
+## Composing with a structured expertise layer
+
+Debrief memory is deliberately **personal and gitignored** — it holds the
+narrative: what happened, what was ruled out, what's half-done. That shape is
+wrong for one class of knowledge: durable technical facts a *teammate's* agent
+needs on a fresh clone. For those, pair this system with a git-tracked, typed
+expertise store — we run [mulch](https://github.com/jayminwest/mulch)
+(`ml record` / `ml prime`) alongside it, and the two are symbiotic rather than
+overlapping:
+
+| Layer | Answers | Shape | Shared? |
+|---|---|---|---|
+| Debrief (this repo) | "Where were we? What was tried and why?" | Narrative, temporal — entries decay as threads close | Gitignored, personal |
+| Expertise store (e.g. mulch) | "What do we know about this domain?" | Typed records (conventions, failures + resolutions, decisions) — atemporal, queryable | Git-tracked, teammates inherit it |
+
+The promotion path runs one way, and it reuses the gate this repo already has:
+the **day-level curation pass**. While synthesizing the daily debrief, ask of
+each observation — *would a teammate's agent, on a fresh clone, be worse off
+without it?* Yes → record it into the expertise store (failures with
+resolutions are the highest-value type). No → it stays here. Most notes don't
+graduate; session state, dead ends, and open threads are exactly what the
+gitignored narrative is for.
+
+This keeps each store honest: the debrief never has to be authoritative about
+technical contracts, and the expertise store never accumulates half-verified
+session narration — everything in it passed a human curation gate first.
+
 ## Lifecycle
 
 ```
