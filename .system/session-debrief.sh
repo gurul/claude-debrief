@@ -62,7 +62,30 @@ for line in open(queue):
     if not line:
         continue
     d = json.loads(line)
-    if d.get("status") == "pending" and not os.path.exists(d.get("draft", "")):
+    draft = d.get("draft", "")
+    # A missing draft does NOT mean the drafter died. `/debrief day` MOVES the
+    # drafts it consumes into sessions/archive/<date>/, which empties the
+    # original path — so an aggregated session looks identical to a failed one
+    # from here. Respawning then re-drafts already-curated work: one
+    # headless run per sweep, three times, then the entry is marked `failed`
+    # even though its draft is sitting in the archive. Observed in a live
+    # install: one session marked `failed` with its draft archived and
+    # aggregated, and another handed a second, *different* draft written
+    # over the top of an already-curated one.
+    # An archived copy is proof day mode consumed it, so heal the status
+    # rather than respawn. Only day mode writes the archive.
+    if draft and not os.path.exists(draft):
+        sess_dir, name = os.path.split(draft)
+        archived = os.path.join(
+            os.path.dirname(sess_dir), "archive", os.path.basename(sess_dir), name
+        )
+        if os.path.exists(archived):
+            if d.get("status") != "aggregated":
+                d["status"] = "aggregated"
+                d.pop("failure", None)
+            out_lines.append(json.dumps(d))
+            continue
+    if d.get("status") == "pending" and not os.path.exists(draft):
         try:
             ended = datetime.strptime(d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
             stale = (now - ended) > timedelta(minutes=15)

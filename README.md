@@ -206,6 +206,14 @@ Guards: recursion (the drafter is itself a Claude session whose exit fires this
 hook — `DEBRIEF_GENERATION=1` breaks the loop), missing transcript, and trivial
 sessions (<30 transcript lines).
 
+The sweep treats an **archived** draft as proof of aggregation rather than a
+dead drafter. Day mode *moves* the drafts it consumes into
+`sessions/archive/<date>/`, which empties the original path — so without that
+check an aggregated session is indistinguishable from a failed one, and the
+sweep re-drafts already-curated work (one headless run per session end, three
+times, then marks it `failed` while its draft sits in the archive). It heals
+the status instead.
+
 ## Cost / tuning
 
 Each substantive session exit spawns one headless `claude -p` run at the default
