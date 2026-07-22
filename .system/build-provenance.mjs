@@ -16,7 +16,14 @@
 //   touched:
 //     my-api: 9c81346 9bdcdc9 3d46771
 //     my-worker: 68a6083
+//   commits: 9c81346 e4f1a02..3d46771 (my-api) 68a6083 (my-worker)
 //   ---
+//
+// Both blocks accept bare SHAs, `a..b` / `a...b` ranges (git semantics — `a..b`
+// EXCLUDES `a`; write `a^..b` to include it), and a `(repo)` annotation naming
+// the repo for the entry it follows. Commas are separators. Anything else is
+// reported and skipped: frontmatter is hand-written, so a placeholder like
+// `(hash not captured)` must never take the build down.
 //
 // Run: node debrief/.system/build-provenance.mjs   (re-run after new commits)
 
@@ -26,7 +33,15 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // debrief/.system
-const DEBRIEF = join(HERE, '..'); // debrief/
+// DEBRIEF_DIR overrides where the memory lives. Node resolves symlinks when
+// computing import.meta.url, so an install that symlinks this file into its
+// own .system/ would otherwise read the CLONE's repos.json and write the
+// CLONE's provenance.json — silently, with no error and a stale graph on the
+// install side. Anything that runs this script from outside its own tree
+// (symlink, vendored copy, monorepo task runner) must say where the memory is.
+const DEBRIEF = process.env.DEBRIEF_DIR
+  ? resolve(process.env.DEBRIEF_DIR)
+  : join(HERE, '..'); // debrief/
 
 // Which working copies this memory spans: repo name → path, from
 // .system/repos.json (see repos.example.json). Paths are resolved relative to
@@ -37,7 +52,7 @@ const DEBRIEF = join(HERE, '..'); // debrief/
 // before anyone had a chance to see the viewer work. Exit 0, not 1: this runs
 // as a predev/prebuild hook, and a missing optional config must not fail the
 // dev server.
-const CONFIG = join(HERE, 'repos.json');
+const CONFIG = join(DEBRIEF, '.system', 'repos.json');
 if (!existsSync(CONFIG)) {
   console.log(
     'build-provenance: no .system/repos.json — skipping (copy repos.example.json to repos.json to enable the graph).',
@@ -61,21 +76,119 @@ function git(repo, args) {
   });
 }
 
-// Which of the three repos contains this commit? (first match wins.)
-// Lets a debrief list bare SHAs (`commits:`) without naming the repo.
-function resolveRepo(sha) {
-  for (const name of Object.keys(REPOS)) {
-    if (!existsSync(REPOS[name])) continue;
-    try {
-      execFileSync('git', ['-C', REPOS[name], 'cat-file', '-e', `${sha}^{commit}`], {
-        stdio: 'ignore',
-      });
-      return name;
-    } catch {
-      // not in this repo
-    }
+// Does this repo actually have this commit? Every SHA reaching git-plumbing
+// below goes through here first. Frontmatter is hand-written — placeholders,
+// typos and prose all land in it — and an unverified SHA used to reach
+// `git show` unguarded and abort the whole build.
+function commitExists(repo, sha) {
+  if (!REPOS[repo] || !existsSync(REPOS[repo])) return false;
+  try {
+    execFileSync('git', ['-C', REPOS[repo], 'cat-file', '-e', `${sha}^{commit}`], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false; // not in this repo
   }
+}
+
+// Which configured repo contains this commit? (first match wins.)
+// Lets a debrief list bare SHAs without naming the repo.
+function resolveRepo(sha) {
+  for (const name of Object.keys(REPOS)) if (commitExists(name, sha)) return name;
   return null;
+}
+
+// Canonical short form. A range expands to 40-char SHAs while a human writes
+// the 7-char one, so without normalizing, the same commit dedupes as two
+// entries when a debrief lists both. git auto-extends past 7 only when
+// ambiguous, and does so consistently within a repo, so both spellings of one
+// commit land on the same string.
+const shortCache = new Map();
+function shortSha(repo, sha) {
+  const key = `${repo}:${sha}`;
+  if (shortCache.has(key)) return shortCache.get(key);
+  let out = sha;
+  try {
+    out = git(repo, ['rev-parse', '--short', `${sha}^{commit}`]).trim() || sha;
+  } catch {
+    // leave as written — it resolved once already to get here
+  }
+  shortCache.set(key, out);
+  return out;
+}
+
+const SHA = /^[0-9a-f]{7,40}$/i;
+const RANGE = /^([0-9a-f]{7,40})\.{2,3}([0-9a-f]{7,40})$/i;
+const ANNOT = /^\(([\w./-]+)\)$/;
+// A range that expands past this is a mis-typed endpoint, not a session's work.
+const RANGE_CAP = 200;
+
+// Split a `touched:`/`commits:` value into commit entries. Returns the junk
+// alongside so the caller can report it once, with document context, instead
+// of either crashing on it or dropping it silently.
+function parseCommitTokens(value) {
+  const entries = [];
+  const junk = [];
+  for (const tok of String(value ?? '').split(/[\s,]+/)) {
+    if (!tok) continue;
+    const annot = ANNOT.exec(tok);
+    if (annot) {
+      // `(repo)` names the repo for the entry it follows.
+      if (entries.length) entries[entries.length - 1].repo = annot[1];
+      else junk.push(tok);
+      continue;
+    }
+    const range = RANGE.exec(tok);
+    if (range) {
+      entries.push({ raw: tok, from: range[1], to: range[2] });
+      continue;
+    }
+    if (SHA.test(tok)) entries.push({ raw: tok, sha: tok });
+    else junk.push(tok);
+  }
+  return { entries, junk };
+}
+
+// One entry → [[repo, sha], …]. `fallbackRepo` is the `touched:` block's key;
+// an explicit `(repo)` annotation wins over it, and probing every configured
+// repo is the last resort. Nothing is returned that git hasn't confirmed.
+function shasForEntry(entry, fallbackRepo, warn) {
+  const declared = entry.repo ?? fallbackRepo ?? null;
+  if (entry.from) {
+    const repo =
+      declared && commitExists(declared, entry.to) ? declared : resolveRepo(entry.to);
+    if (!repo) {
+      warn(`unresolved range ${entry.raw}${declared ? ` (declared ${declared})` : ''}`);
+      return [];
+    }
+    let shas = [];
+    try {
+      shas = git(repo, ['rev-list', `${entry.from}..${entry.to}`])
+        .trim()
+        .split('\n')
+        .filter(Boolean);
+    } catch {
+      warn(`bad range ${entry.raw} in ${repo}`);
+      return [];
+    }
+    if (shas.length === 0) {
+      warn(`empty range ${entry.raw} in ${repo} — \`a..b\` excludes a; did you mean a^..b?`);
+      return [];
+    }
+    if (shas.length > RANGE_CAP) {
+      warn(`range ${entry.raw} expands to ${shas.length} commits — capped at ${RANGE_CAP}`);
+      shas = shas.slice(0, RANGE_CAP);
+    }
+    return shas.map((s) => [repo, shortSha(repo, s)]);
+  }
+  const repo =
+    declared && commitExists(declared, entry.sha) ? declared : resolveRepo(entry.sha);
+  if (!repo) {
+    warn(`unresolved commit ${entry.sha}${declared ? ` (declared ${declared})` : ''}`);
+    return [];
+  }
+  return [[repo, shortSha(repo, entry.sha)]];
 }
 
 // Pull a symbol name out of a git hunk-header context string
@@ -156,7 +269,10 @@ function parseFrontmatter(raw) {
   const end = raw.indexOf('\n---', 3);
   if (end === -1) return {};
   const fm = raw.slice(3, end);
-  const out = { touched: {}, prs: {}, commits: [] };
+  // `touched` and `commits` keep their raw string — tokenizing them is
+  // parseCommitTokens' job, since ranges and `(repo)` annotations don't
+  // survive a naive whitespace split. `prs` stays a plain word list.
+  const out = { touched: {}, prs: {}, commits: '' };
   let section = null;
   for (const line of fm.split('\n')) {
     if (/^touched:\s*$/.test(line)) {
@@ -170,13 +286,15 @@ function parseFrontmatter(raw) {
     // flat `commits: <sha> <sha> …` — repo auto-resolved later
     const cm = /^commits:\s*(.+)$/.exec(line);
     if (cm) {
-      out.commits = cm[1].trim().split(/\s+/);
+      out.commits = cm[1].trim();
       section = null;
       continue;
     }
     if (/^\S/.test(line)) section = null; // left a block
     const m = /^\s+([\w-]+):\s*(.+)$/.exec(line);
-    if (m && section) out[section][m[1]] = m[2].trim().split(/\s+/);
+    if (m && section)
+      out[section][m[1]] =
+        section === 'touched' ? m[2].trim() : m[2].trim().split(/\s+/);
   }
   return out;
 }
@@ -219,7 +337,7 @@ for (const p of allPaths) {
   const raw = readFileSync(p, 'utf8');
   const fm = parseFrontmatter(raw);
   const hasTouched = fm.touched && Object.keys(fm.touched).length > 0;
-  const hasCommits = fm.commits && fm.commits.length > 0;
+  const hasCommits = typeof fm.commits === 'string' && fm.commits.length > 0;
   if (!hasTouched && !hasCommits) continue;
   const id = p.split('/').pop();
   // Date resolution: daily filenames are `YYYY-MM-DD-*.md`, but per-session
@@ -242,13 +360,17 @@ for (const p of allPaths) {
     if (!a.includes(sha)) a.push(sha);
     perRepo.set(repo, a);
   };
-  for (const [repo, shas] of Object.entries(fm.touched ?? {}))
-    for (const sha of shas) add(repo, sha);
-  for (const sha of fm.commits ?? []) {
-    const repo = resolveRepo(sha);
-    if (repo) add(repo, sha);
-    else console.warn(`  unresolved commit ${sha} in ${id}`);
-  }
+  const warn = (field, msg) => console.warn(`  ${id} [${field}]: ${msg}`);
+  const ingest = (field, value, fallbackRepo) => {
+    const { entries, junk } = parseCommitTokens(value);
+    if (junk.length) warn(field, `ignored ${junk.length} non-commit token(s): ${junk.join(' ')}`);
+    for (const e of entries)
+      for (const [repo, sha] of shasForEntry(e, fallbackRepo, (m) => warn(field, m)))
+        add(repo, sha);
+  };
+  for (const [repo, value] of Object.entries(fm.touched ?? {}))
+    ingest(`touched.${repo}`, value, repo);
+  ingest('commits', fm.commits, null);
 
   const repos = [];
   for (const [repo, shas] of perRepo) {
