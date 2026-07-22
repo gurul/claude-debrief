@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prebuild-provenance": "node ../.system/build-provenance.mjs",
+    "prebuild-provenance": "DEBRIEF_DIR=.. node ../.system/build-provenance.mjs",
     "predev": "npm run prebuild-provenance",
     "dev": "vite",
     "prebuild": "npm run prebuild-provenance",
