@@ -196,6 +196,21 @@ print(json.dumps({
 }))
 ' >>"$QUEUE"
 
+# Opt-in cold archive (DEBRIEF_RAW_ARCHIVE=1): gzip the raw transcript next to
+# the queue receipt. Claude Code deletes transcripts after ~30 days, which
+# kills day-mode's raw-transcript fallback for anything older — the queue in a
+# live install already carries entries failed with "transcript missing".
+# Stored as .jsonl.gz so it is structurally invisible to debrief-search.py's
+# collect() (non-.md, no curated frontmatter): this is insurance, NEVER a
+# search corpus. Indexing it would collapse the curation gate.
+if [ -n "${DEBRIEF_RAW_ARCHIVE:-}" ]; then
+  RAW_DIR="$DEBRIEF_DIR/sessions/raw/$DATE"
+  mkdir -p "$RAW_DIR"
+  if gzip -c "$TRANSCRIPT" >"$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz" 2>>"$LOG"; then
+    log "raw-archive: ${TIME}-${SESSION_ID:0:8}.jsonl.gz ($DATE)"
+  fi
+fi
+
 spawn_drafter "$TRANSCRIPT" "$SESSION_ID" "$ENDED_AT" "$REASON" "$OUT"
 log "spawned drafter for $SESSION_ID ($LINES lines, reason=$REASON) -> $OUT"
 exit 0

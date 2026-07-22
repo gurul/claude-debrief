@@ -6,3 +6,4 @@ sessions/
 node_modules/
 dist/
 .DS_Store
+.system/search.db
