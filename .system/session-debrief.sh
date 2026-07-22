@@ -85,6 +85,21 @@ for line in open(queue):
                 d.pop("failure", None)
             out_lines.append(json.dumps(d))
             continue
+    # The OTHER half of the pending ambiguity: a draft that LANDED but that no
+    # day-debrief ever consumed used to stay `pending` forever — invisible and
+    # unbounded (a live install had accumulated 16 such entries over two
+    # weeks). `pending` now strictly means "awaiting drafter"; draft-on-disk
+    # entries older than a day become `unconsumed` — a visible, countable
+    # backlog that only `/debrief day` clears (it archives the draft, which
+    # flips the entry to `aggregated` via the heal above).
+    if d.get("status") == "pending" and os.path.exists(draft):
+        try:
+            ended = datetime.strptime(d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
+            unread = (now - ended) > timedelta(hours=24)
+        except Exception:
+            unread = True
+        if unread:
+            d["status"] = "unconsumed"
     if d.get("status") == "pending" and not os.path.exists(draft):
         try:
             ended = datetime.strptime(d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
@@ -119,6 +134,15 @@ PY
       spawn_drafter "$R_TRANSCRIPT" "$R_SID" "$R_ENDED" "$R_REASON" "$R_OUT"
       log "repair: respawned drafter for $R_SID -> $R_OUT"
     done <<<"$REPAIRS"
+  fi
+  # Surface the unconsumed backlog on every sweep so it can never silently
+  # grow again — visibility is the whole point. Dates are named so a missing
+  # daily is diagnosable from the log line alone.
+  UNCONSUMED_DATES=$(grep '"status": "unconsumed"' "$QUEUE" 2>/dev/null \
+    | grep -o '"ended_at": "[0-9-]*' | cut -d'"' -f4 | sort -u | paste -sd, -)
+  if [ -n "${UNCONSUMED_DATES:-}" ]; then
+    UNCONSUMED=$(grep -c '"status": "unconsumed"' "$QUEUE" 2>/dev/null || true)
+    log "unconsumed-backlog: $UNCONSUMED drafts await a day-debrief (dates: $UNCONSUMED_DATES)"
   fi
   rmdir "$REPAIR_LOCK" 2>/dev/null
 fi

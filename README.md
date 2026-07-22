@@ -214,6 +214,21 @@ sweep re-drafts already-curated work (one headless run per session end, three
 times, then marks it `failed` while its draft sits in the archive). It heals
 the status instead.
 
+`pending` means one thing only: **awaiting the drafter.** A draft that landed
+but that no `/debrief day` ever consumed used to keep that status forever, so
+an unread backlog grew invisibly (16 entries over two weeks in a live install).
+Entries whose draft is on disk and older than 24h now become `unconsumed`, and
+every sweep logs the count and the dates:
+
+```
+unconsumed-backlog: 8 drafts await a day-debrief (dates: 2026-07-06,2026-07-08,…)
+```
+
+Only `/debrief day <date>` clears it — archiving the draft flips the entry to
+`aggregated` via the heal above. Queue statuses in full: `pending` (drafter
+running) → `unconsumed` (draft waiting on curation) → `aggregated` (consumed by
+a daily), or `failed` (drafter died 3×, or its transcript is gone).
+
 ## Cost / tuning
 
 Each substantive session exit spawns one headless `claude -p` run at the default
