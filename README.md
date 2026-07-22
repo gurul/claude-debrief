@@ -246,7 +246,10 @@ npm install
 npm run dev        # http://localhost:5199
 ```
 
-Vite + React + `react-force-graph-3d`. Markdown is pulled in via
+Vite + React. The graph tab is a vertically stacked drill-down tree —
+session → repo → file → function, newest first, spread open on first load —
+not a force simulation: dates read top-to-bottom and every level is a block
+you click into. Markdown is pulled in via
 `import.meta.glob` at dev time, so editing a note hot-reloads the graph. A fresh
 clone renders the shipped example fixture; point `repos.json` at real repos and
 it renders yours.
