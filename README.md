@@ -157,15 +157,46 @@ prs:
 ---
 ```
 
+Both blocks accept the same grammar: bare SHAs, `a..b` / `a...b` ranges, and a
+`(repo)` annotation naming the repo for the entry it follows. Commas are
+separators. Ranges use **git semantics — `a..b` excludes `a`**; write `a^..b`
+to include it.
+
+```yaml
+---
+commits: 09eca51..b90fce7 (era-maker), 07620fb..0ae57bb (era-device-api), f317a7c
+---
+```
+
 Two layers, deliberately: the **auto** layer is whatever git reports; the
 **curated** layer is the SHAs a human decided count as this session's work. A
 debrief with no `commits:`/`touched:` simply won't appear — orientation days with
 no commits are legitimately absent.
 
+**Frontmatter is hand-written, so the builder never trusts it.** Every SHA is
+confirmed with `git cat-file` before any plumbing runs; anything that isn't a
+SHA, a range or an annotation is reported and skipped. A placeholder like
+`temperature-strip fix (hash not captured in draft)` costs you one warning and
+one absent node — it does not abort the build. Warnings name the document and
+the field, so an unresolved SHA points at the repo you forgot to configure:
+
+```
+2026-07-15-fluid-canvas.md [touched.era-firmware-rs]: unresolved commit 5d6fde7 (declared era-firmware-rs)
+```
+
 Rebuild on demand, or let the viewer's `predev`/`prebuild` hook do it:
 
 ```bash
 node debrief/.system/build-provenance.mjs
+```
+
+Set `DEBRIEF_DIR` when the script runs from outside the memory it's building —
+a symlinked or vendored copy, or a monorepo task runner. Node resolves symlinks
+when computing a module's own path, so without it a symlinked builder reads the
+*clone's* `repos.json` and writes the *clone's* `provenance.json`:
+
+```bash
+DEBRIEF_DIR=/path/to/project/debrief node .system/build-provenance.mjs
 ```
 
 ## Viewer
