@@ -9,6 +9,17 @@ and spawns a detached headless `claude -p` that drafts a note on what happened.
 Drafts are **staging material**: nothing reaches durable memory without a human
 pass.
 
+Four pieces, all dependency-light (bash + python3 stdlib + node):
+
+- **Capture** — SessionEnd hook, durable queue receipt, detached drafter,
+  self-repair sweep for drafters that die
+- **Curation gate** — `/debrief` and `/debrief day` slash commands; machine
+  drafts become durable memory only through a reviewed daily
+- **Retrieval** — `debrief-search.py`, sqlite FTS5 over *curated content only*,
+  search → get progressive disclosure
+- **Provenance graph** — git-derived `session → repo → file → function`
+  drill-down, rendered by a small Vite/React viewer
+
 ---
 
 ## The problem this solves
@@ -60,10 +71,10 @@ still leaves a record — and day mode can fall back to the raw transcript.
 Copy this repo's contents into your project as `debrief/`:
 
 ```bash
-git clone git@github.com:Era-Laboratories/claude-debrief.git
+git clone https://github.com/gurul/claude-debrief.git
 mkdir -p /path/to/your-repo/debrief
 cp -R claude-debrief/{.system,viewer,INDEX.md,README.md} /path/to/your-repo/debrief/
-cp claude-debrief/commands/debrief.md ~/.claude/commands/    # user-level slash command
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`

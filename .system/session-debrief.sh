@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionEnd hook for the debrief system (github.com/Era-Laboratories/claude-debrief).
+# SessionEnd hook for the debrief system (github.com/gurul/claude-debrief).
 # Receives Claude Code SessionEnd JSON on stdin, queues the session in
 # sessions/queue.jsonl, and spawns a detached headless drafter that writes a
 # machine-draft session debrief into sessions/<date>/.
