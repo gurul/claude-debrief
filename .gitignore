@@ -3,6 +3,7 @@ sessions/
 .system/hook.log
 .system/repos.json
 .system/.repair.lock
+.system/.backlog-nudge
 node_modules/
 dist/
 .DS_Store
