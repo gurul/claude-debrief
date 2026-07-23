@@ -61,10 +61,20 @@ session ends ──SessionEnd hook──▶ .system/session-debrief.sh
 /debrief       (optional, in-session) ─▶ sessions/<date>/<HHMM>-<slug>.md      status: curated
 /debrief day   (end of day, manual)   ─▶ synthesize <date>-<slug>.md  ─▶ review with the human
                                        ─▶ update INDEX.md  ─▶ archive drafts to sessions/archive/<date>/
+
+session starts ──SessionStart hook──▶ .system/backlog-nudge.sh
+                                        └─ once/day, if the queue is non-empty: nudges the human to
+                                           run /debrief day — read-only, never drains the backlog itself
 ```
 
 The queue receipt is written **before** the drafter runs, so a drafter that dies
 still leaves a record — and day mode can fall back to the raw transcript.
+
+Capture is automatic and draining is manual, so a backlog of uncurated drafts
+is the expected steady state, not a bug. The SessionStart nudge and the
+`/debrief-backlog` command exist to keep that backlog **in front of the human**
+(the SessionEnd sweep only ever logged it to `hook.log`, which nobody opens).
+Neither ever writes a daily — surfacing is not curation.
 
 ## Install
 
@@ -74,7 +84,7 @@ Copy this repo's contents into your project as `debrief/`:
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p /path/to/your-repo/debrief
 cp -R claude-debrief/{.system,viewer,INDEX.md,README.md} /path/to/your-repo/debrief/
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -112,10 +122,41 @@ shared `settings.json`):
 `async: true` matters — `SessionEnd` is non-blocking, and you don't want a
 drafter delaying session exit.
 
-**3. Seed the memory.** Keep `INDEX.md` (edit the template for your project) and
+**3. Wire the backlog nudge** in the same `.claude/settings.local.json`. This
+is what closes the loop: on a fresh session start it surfaces any uncurated
+backlog into the conversation, so the pile can't grow unseen the way it did
+before:
+
+```jsonc
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/debrief/.system/backlog-nudge.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`matcher: "startup"` restricts it to fresh launches (not resume/compact/clear);
+the script re-checks `source` as defence-in-depth. **Not** `async` — an async
+`SessionStart` hook cannot contribute context, which is the opposite of the
+SessionEnd drafter. `SessionStart` hook arrays compose across every settings
+file, so this runs alongside any other start hook you already have. It nudges at
+most once per day and stays silent on a clean queue.
+
+**4. Seed the memory.** Keep `INDEX.md` (edit the template for your project) and
 delete the two example dailies plus `provenance.json` once you have real notes.
 
-**4. Configure the graph** (optional):
+**5. Configure the graph** (optional):
 
 ```bash
 cp debrief/.system/repos.example.json debrief/.system/repos.json  # then edit
@@ -318,6 +359,23 @@ Only `/debrief day <date>` clears it — archiving the draft flips the entry to
 running) → `unconsumed` (draft waiting on curation) → `aggregated` (consumed by
 a daily), or `failed` (drafter died 3×, or its transcript is gone).
 
+That log line is the **detection** end of the loop; the **surfacing** end is a
+SessionStart hook, `.system/backlog-nudge.sh`, which on a fresh start injects a
+one-line backlog summary into the session (once per day, silent on a clean
+queue). `/debrief-backlog` is the human-facing view of the same queue —
+`.system/debrief-backlog.py` prints the exact `/debrief day <date>` command for
+each stranded date, oldest first. Both are strictly read-only: they never write
+a daily, `INDEX.md`, or a queue status. Draining stays a human `/debrief day`
+pass — the curation gate, unchanged.
+
+`failed` is **not terminal** when the material survives. `/debrief day` reads a
+failed entry's `transcript_path` directly, falling back to the raw cold archive;
+`debrief-backlog.py` labels each failed entry `recoverable` (transcript or raw
+on disk) or `terminal` (both gone) so you know which are worth a curation pass.
+`debrief-backlog.py selftest` and `backlog-selftest.sh` check these invariants —
+including that a scan leaves the queue byte-identical, and that the tools resolve
+their debrief dir through a symlinked install rather than back to this clone.
+
 ## Cost / tuning
 
 Each substantive session exit spawns one headless `claude -p` run at the default
@@ -339,15 +397,20 @@ debrief/
     archive/<date>/         # drafts consumed by a daily
     raw/<date>/             # opt-in gzipped transcripts (cold storage, never indexed)
   .system/
-    session-debrief.sh      # the SessionEnd hook
+    session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
+    backlog-nudge.sh        # the SessionStart hook (surfaces the backlog, once/day)
+    debrief-backlog.py      # read-only backlog report (full + --nudge); source of truth
+    backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
     build-provenance.mjs    # git → provenance.json
     debrief-search.py       # FTS5 retrieval over curated memory
     search.db               # generated by debrief-search.py; gitignored
+    .backlog-nudge          # generated: once-per-day nudge stamp; gitignored
     repos.example.json      # copy to repos.json
     prompts/session-draft.md
   viewer/                   # Vite + React memory viewer
 commands/
   debrief.md                # install to ~/.claude/commands/
+  debrief-backlog.md        # install alongside — /debrief-backlog (what needs curating)
   debrief-search.md         # install alongside — /debrief-search <query>
 ```
 
