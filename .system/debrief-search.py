@@ -77,6 +77,11 @@ def collect(debrief):
     idx = os.path.join(debrief, "INDEX.md")
     if os.path.exists(idx):
         yield "INDEX.md", None, "index"
+    # The starred layer. Human-marked and never pruned, so it is the highest-
+    # confidence prose in the corpus — ranked accordingly in cmd_search.
+    hi = os.path.join(debrief, "HIGHLIGHTS.md")
+    if os.path.exists(hi):
+        yield "HIGHLIGHTS.md", None, "highlight"
     sess = os.path.join(debrief, "sessions")
     if not os.path.isdir(sess):
         return
@@ -129,7 +134,7 @@ SCHEMA = """
 CREATE VIRTUAL TABLE chunks USING fts5(doc, date, kind UNINDEXED, section, text);
 CREATE TABLE meta (key TEXT PRIMARY KEY, val TEXT);
 """
-SCHEMA_V = "v2"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
+SCHEMA_V = "v3"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
 
 
 def corpus_fingerprint(debrief, docs):
@@ -183,10 +188,13 @@ def fts_query(q):
 
 def cmd_search(db, args):
     raw_q, safe_q = fts_query(args.query)
+    # --starred: highlights only. A deliberate escape hatch for "what must I
+    # never forget about X", where even a strong body match elsewhere is noise.
+    scope = "AND kind='highlight' " if getattr(args, "starred", False) else ""
     sql = (
         "SELECT rowid, doc, date, kind, section, "
         "snippet(chunks, 4, '«', '»', '…', 14) "
-        "FROM chunks WHERE chunks MATCH ? "
+        "FROM chunks WHERE chunks MATCH ? " + scope +
         # Curation-aware weights (bm25 is negative, lower = better; one
         # hardcoded vector, no tunables). doc=2.0 / section=3.0: filename
         # slugs and headings are the most distilled human signal. kind=0.0
@@ -194,7 +202,16 @@ def cmd_search(db, args):
         # mild layer preference — dailies are the reviewed layer, INDEX the
         # current-understanding layer — sized to break ties, never to
         # override a strong body match in a curated session note.
-        "ORDER BY bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) * "
+        #
+        # The starred layer leads as a SORT KEY, not via a tuned multiplier.
+        # A multiplier cannot deliver the promise: a mere 0.8 loses to any
+        # competing title match (doc=2.0/section=3.0), so "must-know surfaces
+        # first" would hold only when the term appeared nowhere else — the
+        # easy case. Ordering on kind first makes it unconditional and
+        # honest, and needs no constant to babysit. Within each group, and
+        # for everything below, relevance is unchanged.
+        "ORDER BY CASE kind WHEN 'highlight' THEN 0 ELSE 1 END, "
+        "bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) * "
         "CASE kind WHEN 'daily' THEN 1.15 WHEN 'index' THEN 1.1 ELSE 1.0 END "
         "LIMIT ?"
     )
@@ -203,13 +220,46 @@ def cmd_search(db, args):
     except sqlite3.OperationalError:
         rows = db.execute(sql, (safe_q, args.limit)).fetchall()
     if not rows:
-        print("no hits — try fewer/other terms (index covers curated memory only)")
+        hint = "no starred entries match" if getattr(args, "starred", False) else \
+            "no hits — try fewer/other terms (index covers curated memory only)"
+        print(hint)
         return
     for rowid, doc, date, kind, section, snip in rows:
         snip = " ".join(snip.split())
         label = date or kind
-        print(f"[{rowid}] {label} {doc} §{section} — {snip}")
+        star = "★ " if kind == "highlight" else ""
+        print(f"[{rowid}] {star}{label} {doc} §{section} — {snip}")
     print(f"\n({len(rows)} hits; `get <id>` for full text)")
+
+
+ENTRY = re.compile(r"^#{2,3}\s*★")
+
+
+def cmd_stars(db, args):
+    """Print the starred entries — no query, because recall of a must-know
+    list should never depend on guessing its wording.
+
+    Entries only: a `## ★`/`### ★` heading is what marks one. HIGHLIGHTS.md
+    also carries the layer's own explanation (how to star, the two rules,
+    recall), which is scaffolding — printing it would bury the actual list
+    every single time and make the cheap-recall path not cheap.
+    """
+    rows = db.execute(
+        "SELECT rowid, section, text FROM chunks WHERE kind='highlight' ORDER BY rowid"
+    ).fetchall()
+    if not rows:
+        print("no HIGHLIGHTS.md yet — `/debrief highlight <thing>` starts it")
+        return
+    entries = [r for r in rows if ENTRY.match(r[2])]
+    if not entries:
+        print(
+            "HIGHLIGHTS.md has no ★ entries yet "
+            "(only the template) — `/debrief highlight <thing>` adds the first"
+        )
+        return
+    for rowid, section, text in entries:
+        print(f"[{rowid}] {text.strip()}\n")
+    print(f"({len(entries)} starred)")
 
 
 def cmd_get(db, args):
@@ -274,6 +324,12 @@ def cmd_selftest():
         )
         w("INDEX.md", "# Index\n\n## Glossary\n\n- [[retry-loop]] — see 01-05.\n")
         w(
+            "HIGHLIGHTS.md",
+            "# Highlights\n\n## How to star something\n\nPut a ★ on the line.\n\n"
+            "## ★ Derive the idempotency key\n\n"
+            "A key minted inside the payments retry path is new every attempt.\n",
+        )
+        w(
             "sessions/2026-01-05/1200-curated.md",
             "---\nstatus: curated\n---\n\n# Curated note\n\nWebhook secret rotated.\n",
         )
@@ -289,7 +345,10 @@ def cmd_selftest():
         docs = {rel for rel, _, _ in collect(td)}
         check(
             "gate: exactly curated corpus indexed",
-            docs == {"2026-01-05-payments.md", "INDEX.md", "sessions/2026-01-05/1200-curated.md"},
+            docs == {
+                "2026-01-05-payments.md", "INDEX.md", "HIGHLIGHTS.md",
+                "sessions/2026-01-05/1200-curated.md",
+            },
             f"got {sorted(docs)}",
         )
 
@@ -332,6 +391,70 @@ def cmd_selftest():
         ).fetchall()
         check("schema: 'daily' cannot match via kind metadata", meta_hit == [], f"hit {meta_hit}")
 
+        # The starred layer's promise is that it leads when it matches AT ALL —
+        # so the test has to be the hard case, not the easy one. "payments"
+        # appears in the daily's filename AND its H1 (doc=2.0, section=3.0,
+        # plus the 1.15 daily multiplier); an earlier multiplier-based boost
+        # passed a synthetic test where the term lived only in HIGHLIGHTS.md,
+        # then lost to exactly this on the real corpus. Assert against the
+        # strongest available competitor instead.
+        star_top = db.execute(
+            "SELECT doc, kind FROM chunks WHERE chunks MATCH ? "
+            "ORDER BY CASE kind WHEN 'highlight' THEN 0 ELSE 1 END, "
+            "bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) * "
+            "CASE kind WHEN 'daily' THEN 1.15 WHEN 'index' THEN 1.1 ELSE 1.0 END "
+            "LIMIT 1",
+            ('"payments"',),
+        ).fetchone()
+        check(
+            "starred: highlight leads even against a doc-title match",
+            star_top and star_top[1] == "highlight",
+            f"got {star_top}",
+        )
+
+        # ...and the ordering must not swallow the rest of the ranking: a term
+        # absent from the starred layer still returns the best normal hit.
+        normal_top = db.execute(
+            "SELECT doc FROM chunks WHERE chunks MATCH ? "
+            "ORDER BY CASE kind WHEN 'highlight' THEN 0 ELSE 1 END, "
+            "bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) LIMIT 1",
+            ('"backoff"',),
+        ).fetchone()
+        check(
+            "starred: non-starred queries rank normally",
+            normal_top and normal_top[0] == "2026-01-05-payments.md",
+            f"got {normal_top}",
+        )
+
+        # `stars` prints entries, never the layer's own scaffolding.
+        hl_rows = db.execute(
+            "SELECT text FROM chunks WHERE kind='highlight'"
+        ).fetchall()
+        ents = [t for (t,) in hl_rows if ENTRY.match(t)]
+        check(
+            "starred: entry filter selects ★ headings only",
+            len(ents) == 1 and "idempotency key" in ents[0],
+            f"got {len(ents)} entries",
+        )
+
+        scoped = db.execute(
+            "SELECT DISTINCT kind FROM chunks WHERE chunks MATCH ? AND kind='highlight'",
+            ('"key"',),
+        ).fetchall()
+        check(
+            "starred: --starred scope returns only highlights",
+            all(k == "highlight" for (k,) in scoped),
+            f"got {scoped}",
+        )
+
+        # Never pruned is a promise about content, but the retrieval-side
+        # promise is that recall does not require guessing wording: `stars`
+        # returns the layer whole, with no query at all.
+        whole = db.execute(
+            "SELECT COUNT(*) FROM chunks WHERE kind='highlight'"
+        ).fetchone()
+        check("starred: layer readable without a query", whole and whole[0] > 0)
+
     sys.exit(1 if failures else 0)
 
 
@@ -342,6 +465,12 @@ def main():
     s = sub.add_parser("search", help="ranked compact index of matching chunks")
     s.add_argument("query")
     s.add_argument("-n", "--limit", type=int, default=8)
+    s.add_argument(
+        "--starred", action="store_true",
+        help="search the ★ starred layer only (HIGHLIGHTS.md)",
+    )
+    st = sub.add_parser("stars", help="print the ★ starred layer whole (no query)")
+    st.add_argument("-n", "--limit", type=int, default=0, help="unused; kept for symmetry")
     g = sub.add_parser("get", help="full text for chosen ids")
     g.add_argument("ids", nargs="+", type=int)
     g.add_argument(
@@ -353,7 +482,7 @@ def main():
     if args.cmd == "selftest":
         cmd_selftest()  # needs no real corpus; exits
     db = open_index(find_debrief_dir(args.dir))
-    (cmd_search if args.cmd == "search" else cmd_get)(db, args)
+    {"search": cmd_search, "get": cmd_get, "stars": cmd_stars}[args.cmd](db, args)
 
 
 if __name__ == "__main__":

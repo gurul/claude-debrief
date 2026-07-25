@@ -29,15 +29,47 @@ gate between them is the entire design.
 > If you take one idea from this repo, take that. The hook and the viewer are
 > implementation; the gate is the point.
 
-## Two layers
+## Three layers
 
 | Layer | What | Mutability |
 |---|---|---|
 | **Episodic** | Daily debriefs (`YYYY-MM-DD-<slug>.md`) and per-session notes (`sessions/`) | Immutable once written |
 | **Semantic** | `INDEX.md` — table + `[[entity]]` glossary + principles | Pruned and **rewired** toward current understanding |
+| **Starred** | `HIGHLIGHTS.md` — `★` must-know-forever entries | Append-only; **never pruned** |
 
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
+
+### The starred layer
+
+`INDEX.md` is deliberately lossy: it answers "what is true *now*", so an entry
+that stops being load-bearing gets rewired away. That is the right behavior for
+current understanding and the wrong behavior for a lesson you paid for once and
+must never relearn. Hence a third layer with the opposite promise.
+
+A highlight is a margin star in a book: rare, in-situ, and permanent. Two rules
+carry the whole design:
+
+1. **A human stars it.** Hooks and drafters may *propose* (`★ (candidate)` in a
+   session note); only `/debrief highlight`, or a human approving a candidate
+   during a day pass, promotes. An agent starring its own conclusions is the
+   laundering the curation gate exists to prevent.
+2. **No recurrence bar** — and that is the point. `INDEX.md` principles need ≥2
+   debriefs so the list stays short. Highlights are the escape hatch for the
+   one-shot lesson: the 3am root cause, the footgun that cost a day, the
+   constraint invisible in the code.
+
+Keep it short by raising the bar for *adding*, never by deleting. A wrong
+highlight is corrected by appending a superseding entry that names the one it
+replaces — the original stays, because what you believed and why is the record.
+
+Format is one `### ★ <one-line claim>` per entry under `## The starred list`,
+newest first, each ending `— from [<source>](<link>) · starred <date>`. Write
+entries to survive without their context: name the system, the mechanism and the
+consequence, and assume the reader has forgotten the incident entirely.
+
+Recall: `/debrief-highlights` (whole list, or `--starred` search), and plain
+`/debrief-search` ranks `★` hits above every other layer.
 
 ## Lifecycle
 
@@ -49,7 +81,9 @@ session ends ──SessionEnd hook──▶ .system/session-debrief.sh
 
 /debrief       (optional, in-session) ─▶ sessions/<date>/<HHMM>-<slug>.md      status: curated
 /debrief day   (end of day, manual)   ─▶ synthesize <date>-<slug>.md  ─▶ review with the human
-                                       ─▶ update INDEX.md  ─▶ archive drafts to sessions/archive/<date>/
+                                       ─▶ update INDEX.md  ─▶ offer ★ candidates  ─▶ archive drafts
+
+/debrief highlight <thing>  (human, any time) ─▶ appends ★ entry to HIGHLIGHTS.md   (never pruned)
 
 session starts ──SessionStart hook──▶ .system/backlog-nudge.sh
                                         └─ once/day, if the queue is non-empty: nudges the human to
@@ -73,7 +107,7 @@ Copy this repo's contents into your project as `debrief/`:
 git clone git@github.com:Era-Laboratories/claude-debrief.git
 mkdir -p /path/to/your-repo/debrief
 cp -R claude-debrief/{.system,viewer,INDEX.md,README.md} /path/to/your-repo/debrief/
-cp claude-debrief/commands/{debrief,debrief-backlog}.md ~/.claude/commands/   # user-level slash commands
+cp claude-debrief/commands/{debrief,debrief-backlog,debrief-search,debrief-highlights}.md ~/.claude/commands/   # user-level slash commands
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -262,9 +296,28 @@ weight vector: filename slugs and section headings (the most distilled human
 signal) weigh more than body text, metadata columns don't match at all, and
 dailies/INDEX get a mild tie-break multiplier over session notes. No knobs.
 
+The one exception is the starred layer, and it is a **sort key rather than a
+weight**: `HIGHLIGHTS.md` hits are ordered ahead of every other layer whenever
+they match, marked `★`. A multiplier cannot deliver that promise — a mild boost
+still loses to any competing filename or heading match, so "must-know surfaces
+first" would hold only when the term appeared nowhere else, i.e. the case that
+never needed help. Ordering on layer makes it unconditional and leaves the rest
+of the ranking untouched.
+
+```bash
+python3 debrief/.system/debrief-search.py stars                        # the ★ layer, whole, no query
+python3 debrief/.system/debrief-search.py search "waf" --starred       # ★ entries only
+```
+
+`stars` prints entries only — the file's own explanation of how starring works is
+scaffolding and is filtered out, so the cheap-recall path stays cheap.
+
 `debrief-search.py selftest` checks the invariants on a synthetic corpus —
 pass/fail only, never a score. The central assertion is the gate itself:
-machine-draft content must be unsearchable.
+machine-draft content must be unsearchable. The starred invariants assert against
+the *hard* case (a highlight must outrank a competing doc-title match), because
+an earlier multiplier-based implementation passed a synthetic test where the term
+lived only in `HIGHLIGHTS.md`, then lost on the real corpus.
 
 **The curation gate applies to retrieval too.** The index holds dailies,
 `INDEX.md`, and `status: curated` session notes — never machine drafts,
@@ -302,6 +355,10 @@ it renders yours.
 - Drafts carry `status: machine-draft` and an unverified-claims banner. Day mode
   **flags** those claims — it does not launder them into fact.
 - Episodic files are immutable; corrections happen by rewiring INDEX.
+- **Never star anything on your own initiative.** `HIGHLIGHTS.md` is human-written
+  by definition — propose with `★ (candidate)`, never promote. And it is
+  append-only: a wrong highlight is superseded by a new entry naming it, never
+  edited or deleted.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
 - `sessions/raw/` is cold storage — **never indexed, never auto-read.** It
@@ -377,6 +434,7 @@ invocation in `.system/session-debrief.sh`. To change what counts as
 ```
 debrief/
   INDEX.md                  # semantic layer (template — edit for your project)
+  HIGHLIGHTS.md             # starred layer — ★ must-know-forever (append-only, never pruned)
   README.md                 # this file
   YYYY-MM-DD-<slug>.md      # daily debriefs (episodic)
   provenance.json           # generated; example fixture ships with the repo
@@ -391,7 +449,7 @@ debrief/
     debrief-backlog.py      # read-only backlog report (full + --nudge); source of truth
     backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
     build-provenance.mjs    # git → provenance.json
-    debrief-search.py       # FTS5 retrieval over curated memory
+    debrief-search.py       # FTS5 retrieval over curated memory (+ stars / --starred)
     search.db               # generated by debrief-search.py; gitignored
     .backlog-nudge          # generated: once-per-day nudge stamp; gitignored
     repos.example.json      # copy to repos.json
@@ -401,6 +459,7 @@ commands/
   debrief.md                # install to ~/.claude/commands/
   debrief-backlog.md        # install alongside — /debrief-backlog (what needs curating)
   debrief-search.md         # install alongside — /debrief-search <query>
+  debrief-highlights.md     # install alongside — /debrief-highlights [query] (the ★ layer)
 ```
 
 ## Known edges
