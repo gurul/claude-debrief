@@ -361,7 +361,9 @@ it renders yours.
   edited or deleted.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
-- `sessions/raw/` is cold storage — **never indexed, never auto-read.** It
+- `sessions/raw/` is cold storage — **never indexed, never auto-read**, and
+  **redacted before it lands** (`redact-transcript.py`, fail-closed) with a
+  `DEBRIEF_RAW_RETAIN_DAYS` horizon. See "Verbatim archive" below. It
   exists solely because Claude Code deletes transcripts after ~30 days
   (opt-in: `DEBRIEF_RAW_ARCHIVE=1` on the hook). Day mode may fall back to it
   when a live transcript is gone; nothing else touches it. Indexing it would
@@ -422,6 +424,95 @@ on disk) or `terminal` (both gone) so you know which are worth a curation pass.
 including that a scan leaves the queue byte-identical, and that the tools resolve
 their debrief dir through a symlinked install rather than back to this clone.
 
+## Verbatim archive (`sessions/raw/`) — redacted, retained, never indexed
+
+Off by default. Enable with `DEBRIEF_RAW_ARCHIVE=1` on the SessionEnd hook:
+
+```jsonc
+// ~/.claude/settings.local.json → hooks.SessionEnd[].hooks[]
+{
+  "type": "command",
+  "command": "$CLAUDE_PROJECT_DIR/_system/debrief/.system/session-debrief.sh",
+  "async": true,
+  "env": { "DEBRIEF_RAW_ARCHIVE": "1", "DEBRIEF_RAW_RETAIN_DAYS": "180" }
+}
+```
+
+### Why you'd want it
+
+Dailies and session notes are **summaries** — they keep the conclusions and drop
+the evidence. The archive is what you reach for when the conclusion isn't enough:
+
+| You need | Summary gives you | Archive gives you |
+|---|---|---|
+| **The exact file that broke** | "the WAF rejected plan bodies" | `terraform/environments/staging/main.tf:683`, the line and its value |
+| **The exact identifier** | "a CRS rule matched" | `owasp-crs-v030301-id932140-rce`, `priority 1000`, `body_denied_by_security_policy` |
+| **The exact command that proved it** | "verified in the cluster" | the literal `kubectl`/`gcloud` invocation and its output |
+| **What an overnight run actually did** | the agent's own account of itself | every tool call, in order, including the ones it didn't mention |
+
+That last row is the strongest reason. For autonomous sessions you did not watch,
+a self-written summary is the agent grading its own homework; the transcript is
+the only independent record. Concretely, `grep -l` over the archive answers *"which
+session touched this file, and what did it run?"* — a question the semantic layer
+is structurally unable to answer, because it stores understanding rather than acts.
+
+```bash
+# which archived session touched a file, and what did it do there?
+zgrep -l "SimulateStage.tsx" debrief/sessions/raw/*/*.jsonl.gz
+zgrep -h "kubectl -n tensorzero" debrief/sessions/raw/2026-07-24/*.jsonl.gz | head
+```
+
+### Redaction is not optional
+
+The transcript contains everything the tool calls echoed, and the leak vector is
+**not** credentials handled deliberately — it is third-party output that happens
+to carry one. Measured case: a LiveKit `access_token=eyJ…` arrived inside a
+Traefik access-log line during an unrelated outage investigation, and a raw
+archive would have banked it verbatim.
+
+So the transcript is piped through `.system/redact-transcript.py` before gzip.
+It scrubs JWTs, `Bearer` tokens, GitHub/Slack/Stripe/Google/AWS/OpenAI/Anthropic
+key shapes, PEM private-key blocks, `user:pass@host` URLs, and a broad
+`*password|*secret|*token|*api_key… = value` sweep — replacing each with
+`[REDACTED:<kind>]`.
+
+Three properties matter more than the pattern list:
+
+- **Output stays valid JSONL, line for line.** Day mode parses this as its
+  fallback; a redactor that corrupts structure destroys the only reason the
+  archive exists. Verified against a real 86-line transcript: 86 lines out, zero
+  invalid JSON, zero residual tokens.
+- **Fail closed.** A missing or failing redactor means **no archive**, not a raw
+  one. Same for a truncated pipe — gzip's exit status is not trusted, because
+  gzip succeeds happily on a truncated stream.
+- **Over-redaction is fine; under-redaction is not.** One deliberate exception:
+  `authorization` is spelled out rather than bare `auth`, so git JSON's
+  `"author":"…"` survives. Redacting every commit author would gut the audit
+  value the archive exists for.
+
+`redact-transcript.py --selftest` asserts all of it — including that a
+`DB_PASSWORD=` style key is caught (`\bpass` does **not** match inside
+`DB_PASSWORD`, because `_` is a word character; the selftest caught that bug).
+
+### Retention
+
+`DEBRIEF_RAW_RETAIN_DAYS` (default **180**) prunes whole date directories past
+the horizon on each hook run. Compared by directory **name**, not mtime, so a
+backup pass or filesystem copy cannot silently extend an archive's life. Set `0`
+to disable pruning — but "forever" is otherwise a decision you make once, by
+accident, and cannot undo.
+
+Volume is not the constraint: measured at ~0.6–3.5 MB/day raw, ~59% after gzip —
+roughly **1 MB/day, ~365 MB/year**.
+
+### Still never indexed
+
+Stored as `.jsonl.gz`, structurally invisible to `debrief-search.py`'s
+`collect()` (non-`.md`, no curated frontmatter). This is deliberate and load
+bearing: the moment raw transcripts become searchable, unverified machine claims
+re-enter memory through the back door — exactly what the curation gate exists to
+prevent. The archive is insurance and audit, never a search corpus.
+
 ## Cost / tuning
 
 Each substantive session exit spawns one headless `claude -p` run at the default
@@ -442,14 +533,16 @@ debrief/
     queue.jsonl             # one receipt per substantive session
     <date>/                 # session drafts awaiting curation
     archive/<date>/         # drafts consumed by a daily
-    raw/<date>/             # opt-in gzipped transcripts (cold storage, never indexed)
+    raw/<date>/             # opt-in REDACTED gzipped transcripts (cold storage, never indexed, pruned)
   .system/
     session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
     backlog-nudge.sh        # the SessionStart hook (surfaces the backlog, once/day)
     debrief-backlog.py      # read-only backlog report (full + --nudge); source of truth
     backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
+    archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
     build-provenance.mjs    # git → provenance.json
     debrief-search.py       # FTS5 retrieval over curated memory (+ stars / --starred)
+    redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
     search.db               # generated by debrief-search.py; gitignored
     .backlog-nudge          # generated: once-per-day nudge stamp; gitignored
     repos.example.json      # copy to repos.json

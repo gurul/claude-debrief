@@ -203,11 +203,61 @@ print(json.dumps({
 # Stored as .jsonl.gz so it is structurally invisible to debrief-search.py's
 # collect() (non-.md, no curated frontmatter): this is insurance, NEVER a
 # search corpus. Indexing it would collapse the curation gate.
+#
+# Redaction is not optional. Walling the archive off from *search* says nothing
+# about the bytes at rest, and the leak vector is not credentials handled
+# deliberately — it is third-party output that happens to carry one (measured
+# case: a LiveKit `access_token=eyJ…` inside a Traefik access-log line during an
+# unrelated investigation). So the transcript goes through redact-transcript.py
+# on the way to gzip, and a missing/failing redactor means NO archive rather
+# than a raw one: fail closed, because a silently-unredacted archive is worse
+# than no archive at all.
+#
+# Retention: DEBRIEF_RAW_RETAIN_DAYS (default 180). "Forever" is a decision you
+# otherwise make once, by accident, and cannot undo.
 if [ -n "${DEBRIEF_RAW_ARCHIVE:-}" ]; then
+  REDACTOR="$(dirname "$0")/redact-transcript.py"
   RAW_DIR="$DEBRIEF_DIR/sessions/raw/$DATE"
-  mkdir -p "$RAW_DIR"
-  if gzip -c "$TRANSCRIPT" >"$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz" 2>>"$LOG"; then
-    log "raw-archive: ${TIME}-${SESSION_ID:0:8}.jsonl.gz ($DATE)"
+  RAW_OUT="$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz"
+  if [ ! -f "$REDACTOR" ]; then
+    log "raw-archive: SKIPPED — redactor missing at $REDACTOR (failing closed)"
+  else
+    mkdir -p "$RAW_DIR"
+    # Pipe, but check the redactor's status rather than gzip's: with a plain
+    # pipe gzip happily succeeds on a truncated stream, which would bank a
+    # partial archive as if it were whole.
+    if REDACT_LOG=$(python3 "$REDACTOR" "$TRANSCRIPT" 2>&1 >"$RAW_DIR/.tmp.$$"); then
+      if gzip -c "$RAW_DIR/.tmp.$$" >"$RAW_OUT" 2>>"$LOG"; then
+        log "raw-archive: $(basename "$RAW_OUT") ($DATE) [${REDACT_LOG:-no matches}]"
+      else
+        log "raw-archive: gzip failed for $SESSION_ID"
+        rm -f "$RAW_OUT"
+      fi
+    else
+      log "raw-archive: SKIPPED — redactor failed for $SESSION_ID: $REDACT_LOG"
+    fi
+    rm -f "$RAW_DIR/.tmp.$$"
+  fi
+
+  # Prune whole date directories past the retention horizon. Compared by NAME
+  # (dirs are YYYY-MM-DD) not mtime, so re-touching an old archive — a backup
+  # pass, a filesystem copy — cannot silently extend its life.
+  RETAIN="${DEBRIEF_RAW_RETAIN_DAYS:-180}"
+  if [ "$RETAIN" -gt 0 ] 2>/dev/null; then
+    CUTOFF=$(python3 -c "import datetime,sys; print((datetime.date.today()-datetime.timedelta(days=int(sys.argv[1]))).isoformat())" "$RETAIN" 2>/dev/null)
+    if [ -n "$CUTOFF" ] && [ -d "$DEBRIEF_DIR/sessions/raw" ]; then
+      for d in "$DEBRIEF_DIR/sessions/raw"/*; do
+        [ -d "$d" ] || continue
+        b=$(basename "$d")
+        case "$b" in
+          [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+            if [ "$b" \< "$CUTOFF" ]; then
+              rm -rf "$d" && log "raw-archive: pruned $b (retain ${RETAIN}d, cutoff $CUTOFF)"
+            fi
+            ;;
+        esac
+      done
+    fi
   fi
 fi
 
