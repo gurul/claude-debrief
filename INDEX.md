@@ -5,7 +5,7 @@
 > your own. Everything else in `debrief/` is episodic and immutable; this file is
 > the one that gets *rewired*.
 
-## How this memory works (two layers)
+## How this memory works (three layers)
 
 - **Episodic** — immutable records of what happened and why: daily debriefs
   (`YYYY-MM-DD-<slug>.md`) and, below them, per-session notes in `sessions/`.
@@ -13,14 +13,22 @@
   says what was believed at the time — that's the point.
 - **Semantic** — this file. A table of debriefs, a glossary of `[[entities]]`, and
   a short list of principles. Pruned and rewired toward current best understanding.
+- **Starred** — [`HIGHLIGHTS.md`](HIGHLIGHTS.md). The `★` must-know-forever list.
+  Append-only and **never pruned**.
 
 Corrections happen *here*, by rewiring — not by editing history.
+
+This file is deliberately lossy: it answers "what is true *now*", so entries leave
+when superseded. That makes it the wrong home for a lesson you must never relearn
+— those get starred instead. The bar differs on purpose: principles below need
+**≥2 debriefs**; a highlight needs only a human saying "never again", once.
 
 ## Principles (attractors)
 
 Promote a principle only once it has recurred in **≥2 debriefs**. One-offs are
 observations, not principles; the bar exists so this list stays short enough to
-actually carry into a session.
+actually carry into a session. A one-off that must never be relearned isn't a
+principle — star it in [`HIGHLIGHTS.md`](HIGHLIGHTS.md) instead.
 
 1. *(example)* **Verify at the boundary you claim.** A green type-check is not a
    working feature — exercise the real path before calling it done.
