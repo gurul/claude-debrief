@@ -31,6 +31,12 @@ Two-step workflow — filter before you fetch, so full sections enter context on
 
 ## What the index covers — and deliberately doesn't
 
-Daily debriefs, `INDEX.md`, and session notes with `status: curated`. **Machine drafts are not indexed**, archived or not: their content becomes searchable only after `/debrief day` has verified or flagged its claims. If a search comes up empty but you suspect the answer is in an uncurated draft, the correct move is to tell the human that date needs a `/debrief day` pass — not to read the draft and present its claims as memory.
+Daily debriefs, `INDEX.md`, `HIGHLIGHTS.md`, and session notes with `status: curated`. **Machine drafts are not indexed**, archived or not: their content becomes searchable only after `/debrief day` has verified or flagged its claims. If a search comes up empty but you suspect the answer is in an uncurated draft, the correct move is to tell the human that date needs a `/debrief day` pass — not to read the draft and present its claims as memory.
 
 Query syntax: terms are AND-ed; FTS5 syntax (`"exact phrase"`, `OR`, `NOT`) passes through when valid.
+
+## The ★ starred layer ranks first
+
+Hits from `HIGHLIGHTS.md` are printed above everything else, marked `★`, whenever they match at all — ordering on layer, not a weight, so a must-know cannot be buried by a stronger title match elsewhere. Treat a `★` hit as the answer to lead with, then use the other layers for detail.
+
+`--starred` narrows the search to that layer only, for "what must I never forget about X". `stars` prints the layer whole with no query — see `/debrief-highlights`, which wraps both.
