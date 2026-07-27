@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { marked } from 'marked';
-import { dailies, docs, indexDoc, sessions, type Doc } from './lib';
+import {
+  dailies,
+  docs,
+  highlights,
+  highlightsDoc,
+  indexDoc,
+  sessions,
+  type Doc,
+} from './lib';
 import { Graph } from './Graph';
+import { Highlights } from './Highlights';
+import { renderMd } from './md';
 
-type Tab = 'memory' | 'debriefs' | 'sessions' | 'graph';
-
-/** [[entity]] → clickable span; then markdown → HTML. */
-function renderMd(md: string): string {
-  const linked = md.replace(
-    /\[\[([^\]|]+)\]\]/g,
-    (_, name: string) =>
-      `<span class="wikilink" data-entity="${name.trim()}">${name.trim()}</span>`,
-  );
-  return marked.parse(linked, { async: false }) as string;
-}
+type Tab = 'memory' | '★ highlights' | 'debriefs' | 'sessions' | 'graph';
 
 function StatusBadge({ doc }: { doc: Doc }) {
   if (doc.kind !== 'session') return null;
@@ -157,7 +156,15 @@ export default function App() {
       <header className="topbar">
         <h1>project · memory</h1>
         <div className="tabs" role="tablist">
-          {(['memory', 'debriefs', 'sessions', 'graph'] as Tab[]).map((t) => (
+          {(
+            [
+              'memory',
+              ...(highlightsDoc ? (['★ highlights'] as Tab[]) : []),
+              'debriefs',
+              'sessions',
+              'graph',
+            ] as Tab[]
+          ).map((t) => (
             <button
               key={t}
               role="tab"
@@ -184,6 +191,22 @@ export default function App() {
 
       {tab === 'memory' && (
         <main className="single">{reader(null, indexDoc)}</main>
+      )}
+
+      {/* Parsed cards when the file has a starred list; the raw document as a
+          collapse-to-safety fallback when it does not. Never a blank tab. */}
+      {tab === '★ highlights' && (
+        <main className="single">
+          {highlights.length ? (
+            <Highlights
+              query={query}
+              onProseClick={onProseClick}
+              onOpenDoc={openDoc}
+            />
+          ) : (
+            reader(null, highlightsDoc)
+          )}
+        </main>
       )}
 
       {tab === 'debriefs' && (

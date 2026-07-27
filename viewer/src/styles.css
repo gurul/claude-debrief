@@ -185,3 +185,120 @@ mark.gr-hl {
   display: flex; flex-wrap: wrap; gap: 6px; margin-top: 24px;
   padding-top: 16px; border-top: 1px solid var(--line);
 }
+
+/* ── ★ highlights: marginalia, boxed ───────────────────────────────────
+   A card per lesson: quiet star in a margin gutter, serif claim reading as
+   a pull-quote rather than a heading, body at FULL ink because supporting
+   text still has to be read. No fade masks and no mid-word ellipsis
+   anywhere — a gradient lies about where the text ends. Truncation is by
+   paragraph or sentence, with --hl-lines as the floor that cannot fail. */
+/* The card IS the measure — ~68ch of body text plus the gutter. Capping the
+   text inside a wider card leaves dead space and stops the footer rule short. */
+.hl-page { max-width: 660px; margin: 0 auto; padding-bottom: 80px; --hl-lines: 8; }
+
+.hl-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 11px; margin-bottom: 16px; border-bottom: 1px solid var(--line);
+}
+.hl-head h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
+.hl-count { color: var(--ink-3); font-size: 12px; }
+.hl-allbtn {
+  margin-left: auto; background: none; border: 0; padding: 0;
+  color: var(--ink-3); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.hl-allbtn:hover { color: var(--ink-2); text-decoration: underline; }
+.hl-allbtn:focus-visible { outline: 1px solid var(--ink-2); outline-offset: 3px; }
+
+.hl-list { display: flex; flex-direction: column; gap: 10px; }
+
+.hl-card {
+  display: grid; grid-template-columns: 26px 1fr;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 15px 18px 12px;
+}
+.hl-card:hover, .hl-card:focus-within { border-color: #3f423d; }
+.hl-col { min-width: 0; }
+
+/* quiet at rest, --entity only on attention: an amber star sitting next to
+   amber wikilink text is the one real collision on this page. */
+.hl-gutter { color: var(--ink-3); font-size: 13px; line-height: 1.5; user-select: none; }
+.hl-card:hover .hl-gutter, .hl-card:focus-within .hl-gutter { color: var(--entity); }
+
+.hl-claim {
+  margin: 0; color: var(--ink); letter-spacing: -0.004em;
+  font: 600 18px/1.34 'Iowan Old Style', Charter, Georgia, serif;
+}
+.hl-claim code {
+  font: 0.78em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg); border: 1px solid var(--line);
+  padding: 1px 5px; border-radius: 4px;
+}
+.hl-tmpl { display: inline-block; margin-top: 9px; }
+
+.hl-lede, .hl-rest {
+  font-size: 14.5px; line-height: 1.62; color: var(--ink);
+}
+.hl-lede { margin-top: 10px; }
+.hl-rest { margin-top: 12px; }
+.hl-lede[data-clamp='1'] {
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--hl-lines); overflow: hidden;
+}
+.hl-lede p, .hl-rest p { margin: 0 0 10px; }
+.hl-lede p:last-child, .hl-rest p:last-child { margin-bottom: 0; }
+.hl-lede a, .hl-rest a { color: var(--doc); }
+.hl-lede code, .hl-rest code {
+  background: var(--bg); border: 1px solid var(--line);
+  padding: 1px 5px; border-radius: 4px; font-size: 12px;
+}
+.hl-rest ul, .hl-rest ol { margin: 0 0 10px; padding-left: 22px; }
+.hl-rest pre {
+  background: var(--bg); border: 1px solid var(--line);
+  padding: 10px; border-radius: 8px; overflow-x: auto;
+}
+.hl-rest pre code { border: none; background: none; padding: 0; }
+
+.hl-fold {
+  margin-top: 11px; background: none; border: 0; padding: 0;
+  color: var(--ink-3); font: inherit; font-size: 12.5px;
+  letter-spacing: 0.03em; cursor: pointer;
+}
+.hl-fold:hover { color: var(--ink-2); text-decoration: underline; }
+.hl-fold:focus-visible { outline: 1px solid var(--ink-2); outline-offset: 3px; border-radius: 2px; }
+
+.hl-src {
+  margin-top: 13px; padding-top: 9px; border-top: 1px solid var(--line);
+  color: var(--ink-3); font-size: 11.5px;
+}
+.hl-src a, .hl-link { color: var(--doc); }
+.hl-link { background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px; cursor: pointer; }
+.hl-link:hover { text-decoration: underline; }
+.hl-link:focus-visible { outline: 1px solid var(--ink-2); outline-offset: 2px; }
+.hl-when { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+.hl-sep {
+  display: flex; align-items: center; gap: 10px; margin: 22px 0 2px;
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+}
+.hl-sep::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+
+/* scaffolding must never be mistaken for a real lesson: no panel fill, and
+   every layer of text steps down one rank. */
+.hl-card.is-example { background: none; }
+.hl-card.is-example .hl-claim { color: var(--ink-2); font-weight: 500; }
+.hl-card.is-example .hl-lede, .hl-card.is-example .hl-rest { color: var(--ink-2); }
+
+.hl-about { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 14px; }
+.hl-about > summary {
+  cursor: pointer; color: var(--ink-3); font-size: 12.5px; list-style: none;
+}
+.hl-about > summary::-webkit-details-marker { display: none; }
+.hl-about > summary:hover { color: var(--ink-2); }
+.hl-about > summary:focus-visible { outline: 1px solid var(--ink-2); outline-offset: 3px; }
+.hl-about .prose { padding: 8px 0 0; max-width: 760px; overflow: visible; }
+
+@media (max-width: 640px) {
+  .hl-card { grid-template-columns: 1fr; }
+  .hl-gutter { margin-bottom: 2px; }
+  .hl-claim { font-size: 17px; }
+}
