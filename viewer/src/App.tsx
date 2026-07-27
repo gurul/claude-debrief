@@ -9,10 +9,18 @@ import {
   type Doc,
 } from './lib';
 import { Graph } from './Graph';
+import { rawSessions } from './raw';
 import { Highlights } from './Highlights';
+import { RawSessions } from './RawSessions';
 import { renderMd } from './md';
 
-type Tab = 'memory' | '★ highlights' | 'debriefs' | 'sessions' | 'graph';
+type Tab =
+  | 'memory'
+  | '★ highlights'
+  | 'debriefs'
+  | 'sessions'
+  | 'verbatim'
+  | 'graph';
 
 function StatusBadge({ doc }: { doc: Doc }) {
   if (doc.kind !== 'session') return null;
@@ -162,6 +170,7 @@ export default function App() {
               ...(highlightsDoc ? (['★ highlights'] as Tab[]) : []),
               'debriefs',
               'sessions',
+              ...(rawSessions.length ? (['verbatim'] as Tab[]) : []),
               'graph',
             ] as Tab[]
           ).map((t) => (
@@ -222,6 +231,8 @@ export default function App() {
           {reader(selected?.kind === 'session' ? selected : null, sessions[0] ?? null)}
         </main>
       )}
+
+      {tab === 'verbatim' && <RawSessions />}
 
       {tab === 'graph' && (
         <main className="graphpane">

@@ -123,6 +123,10 @@ function buildDocs(): Doc[] {
   }
   for (const [file, raw] of Object.entries(sessionFiles)) {
     const rel = file.replace(/^\.\.\/\.\.\//, '');
+    // sessions/raw/ is cold storage — verbatim, unverified, and reachable only
+    // through the deliberate `verbatim` tab. A stray .md in there (a guard note,
+    // a stub) must never enter the curated doc list or the entity map.
+    if (rel.startsWith('sessions/raw/')) continue;
     const name = file.split('/').pop() ?? file;
     const { body, status } = stripFrontmatter(raw);
     const dateMatch = /sessions\/(?:archive\/)?(\d{4}-\d{2}-\d{2})\//.exec(rel);

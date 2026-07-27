@@ -524,6 +524,33 @@ bearing: the moment raw transcripts become searchable, unverified machine claims
 re-enter memory through the back door — exactly what the curation gate exists to
 prevent. The archive is insurance and audit, never a search corpus.
 
+### Reading one anyway — the `verbatim` tab
+
+Never-indexed is not never-readable. The viewer has a **verbatim** tab that lists
+every archive by day and renders one on click. Decompression happens in the
+browser (`DecompressionStream`), on an explicit human action, and nothing is
+written back to disk — so the `.jsonl.gz` on disk stays the only copy and stays
+invisible to retrieval.
+
+Two things it deliberately does not show:
+
+- **Tool results.** Only the tool *name*, as a chip. Re-reading raw tool output
+  is the most common way a refuted intermediate conclusion gets laundered back
+  into memory as fact.
+- **Reasoning blocks.** Shown as a `reasoning` chip, never as text, for the same
+  reason.
+
+The pane carries a standing "unverified, evidence not memory" banner and is
+styled plainer than the curated layers, because the styling should not invite a
+trust the content has not earned.
+
+**The agent rule.** An agent must not read these archives on its own initiative —
+only when a human names a specific session and asks. Everything in raw is
+unverified by construction: every abandoned theory and misread file survives
+verbatim with nothing marking it wrong. Drop a note stating this into
+`sessions/raw/README.md` in your live install (that path is gitignored here, so
+it cannot ship from this repo).
+
 ## Cost / tuning
 
 Each substantive session exit spawns one headless `claude -p` run at the default
