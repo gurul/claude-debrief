@@ -13,6 +13,78 @@ QUEUE="$DEBRIEF_DIR/sessions/queue.jsonl"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
 
+# Cold archive (DEBRIEF_RAW_ARCHIVE=1). Defined here and called BEFORE the
+# triviality gate: every session that produced a transcript is archived, even
+# the short ones. Triviality decides whether a session is worth DRAFTING, not
+# whether it is worth keeping — a three-line session that broke production is
+# exactly the one you want the verbatim record of.
+archive_raw() {
+  # Opt-in cold archive (DEBRIEF_RAW_ARCHIVE=1): gzip the raw transcript next to
+  # the queue receipt. Claude Code deletes transcripts after ~30 days, which
+  # kills day-mode's raw-transcript fallback for anything older — the queue in a
+  # live install already carries entries failed with "transcript missing".
+  # Stored as .jsonl.gz so it is structurally invisible to debrief-search.py's
+  # collect() (non-.md, no curated frontmatter): this is insurance, NEVER a
+  # search corpus. Indexing it would collapse the curation gate.
+  #
+  # Redaction is not optional. Walling the archive off from *search* says nothing
+  # about the bytes at rest, and the leak vector is not credentials handled
+  # deliberately — it is third-party output that happens to carry one (measured
+  # case: a LiveKit `access_token=eyJ…` inside a Traefik access-log line during an
+  # unrelated investigation). So the transcript goes through redact-transcript.py
+  # on the way to gzip, and a missing/failing redactor means NO archive rather
+  # than a raw one: fail closed, because a silently-unredacted archive is worse
+  # than no archive at all.
+  #
+  # Retention: DEBRIEF_RAW_RETAIN_DAYS (default 180). "Forever" is a decision you
+  # otherwise make once, by accident, and cannot undo.
+  if [ -n "${DEBRIEF_RAW_ARCHIVE:-}" ]; then
+    REDACTOR="$(dirname "$0")/redact-transcript.py"
+    RAW_DIR="$DEBRIEF_DIR/sessions/raw/$DATE"
+    RAW_OUT="$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz"
+    if [ ! -f "$REDACTOR" ]; then
+      log "raw-archive: SKIPPED — redactor missing at $REDACTOR (failing closed)"
+    else
+      mkdir -p "$RAW_DIR"
+      # Pipe, but check the redactor's status rather than gzip's: with a plain
+      # pipe gzip happily succeeds on a truncated stream, which would bank a
+      # partial archive as if it were whole.
+      if REDACT_LOG=$(python3 "$REDACTOR" "$TRANSCRIPT" 2>&1 >"$RAW_DIR/.tmp.$$"); then
+        if gzip -c "$RAW_DIR/.tmp.$$" >"$RAW_OUT" 2>>"$LOG"; then
+          log "raw-archive: $(basename "$RAW_OUT") ($DATE) [${REDACT_LOG:-no matches}]"
+        else
+          log "raw-archive: gzip failed for $SESSION_ID"
+          rm -f "$RAW_OUT"
+        fi
+      else
+        log "raw-archive: SKIPPED — redactor failed for $SESSION_ID: $REDACT_LOG"
+      fi
+      rm -f "$RAW_DIR/.tmp.$$"
+    fi
+
+    # Prune whole date directories past the retention horizon. Compared by NAME
+    # (dirs are YYYY-MM-DD) not mtime, so re-touching an old archive — a backup
+    # pass, a filesystem copy — cannot silently extend its life.
+    RETAIN="${DEBRIEF_RAW_RETAIN_DAYS:-180}"
+    if [ "$RETAIN" -gt 0 ] 2>/dev/null; then
+      CUTOFF=$(python3 -c "import datetime,sys; print((datetime.date.today()-datetime.timedelta(days=int(sys.argv[1]))).isoformat())" "$RETAIN" 2>/dev/null)
+      if [ -n "$CUTOFF" ] && [ -d "$DEBRIEF_DIR/sessions/raw" ]; then
+        for d in "$DEBRIEF_DIR/sessions/raw"/*; do
+          [ -d "$d" ] || continue
+          b=$(basename "$d")
+          case "$b" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+              if [ "$b" \< "$CUTOFF" ]; then
+                rm -rf "$d" && log "raw-archive: pruned $b (retain ${RETAIN}d, cutoff $CUTOFF)"
+              fi
+              ;;
+          esac
+        done
+      fi
+    fi
+  fi
+}
+
 # Recursion guard: the headless drafter is itself a claude session whose exit
 # fires this same hook. It runs with DEBRIEF_GENERATION=1 in its environment.
 if [ -n "${DEBRIEF_GENERATION:-}" ]; then
@@ -169,15 +241,19 @@ if [ ! -f "${TRANSCRIPT:-}" ]; then
   exit 0
 fi
 
-LINES=$(wc -l <"$TRANSCRIPT" | tr -d ' ')
-if [ "$LINES" -lt 30 ]; then
-  log "skip: trivial session ($SESSION_ID, $LINES transcript lines)"
-  exit 0
-fi
-
 ENDED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 DATE="$(date +%Y-%m-%d)"
 TIME="$(date +%H%M)"
+
+# Archive first, unconditionally. Nothing below this line may cause a session
+# to go unrecorded.
+archive_raw
+
+LINES=$(wc -l <"$TRANSCRIPT" | tr -d ' ')
+if [ "$LINES" -lt 30 ]; then
+  log "skip-draft: trivial session ($SESSION_ID, $LINES lines) — archived, not drafted"
+  exit 0
+fi
 OUT_DIR="$DEBRIEF_DIR/sessions/$DATE"
 OUT="$OUT_DIR/${TIME}-${SESSION_ID:0:8}.md"
 mkdir -p "$OUT_DIR"
@@ -196,70 +272,6 @@ print(json.dumps({
 }))
 ' >>"$QUEUE"
 
-# Opt-in cold archive (DEBRIEF_RAW_ARCHIVE=1): gzip the raw transcript next to
-# the queue receipt. Claude Code deletes transcripts after ~30 days, which
-# kills day-mode's raw-transcript fallback for anything older — the queue in a
-# live install already carries entries failed with "transcript missing".
-# Stored as .jsonl.gz so it is structurally invisible to debrief-search.py's
-# collect() (non-.md, no curated frontmatter): this is insurance, NEVER a
-# search corpus. Indexing it would collapse the curation gate.
-#
-# Redaction is not optional. Walling the archive off from *search* says nothing
-# about the bytes at rest, and the leak vector is not credentials handled
-# deliberately — it is third-party output that happens to carry one (measured
-# case: a LiveKit `access_token=eyJ…` inside a Traefik access-log line during an
-# unrelated investigation). So the transcript goes through redact-transcript.py
-# on the way to gzip, and a missing/failing redactor means NO archive rather
-# than a raw one: fail closed, because a silently-unredacted archive is worse
-# than no archive at all.
-#
-# Retention: DEBRIEF_RAW_RETAIN_DAYS (default 180). "Forever" is a decision you
-# otherwise make once, by accident, and cannot undo.
-if [ -n "${DEBRIEF_RAW_ARCHIVE:-}" ]; then
-  REDACTOR="$(dirname "$0")/redact-transcript.py"
-  RAW_DIR="$DEBRIEF_DIR/sessions/raw/$DATE"
-  RAW_OUT="$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz"
-  if [ ! -f "$REDACTOR" ]; then
-    log "raw-archive: SKIPPED — redactor missing at $REDACTOR (failing closed)"
-  else
-    mkdir -p "$RAW_DIR"
-    # Pipe, but check the redactor's status rather than gzip's: with a plain
-    # pipe gzip happily succeeds on a truncated stream, which would bank a
-    # partial archive as if it were whole.
-    if REDACT_LOG=$(python3 "$REDACTOR" "$TRANSCRIPT" 2>&1 >"$RAW_DIR/.tmp.$$"); then
-      if gzip -c "$RAW_DIR/.tmp.$$" >"$RAW_OUT" 2>>"$LOG"; then
-        log "raw-archive: $(basename "$RAW_OUT") ($DATE) [${REDACT_LOG:-no matches}]"
-      else
-        log "raw-archive: gzip failed for $SESSION_ID"
-        rm -f "$RAW_OUT"
-      fi
-    else
-      log "raw-archive: SKIPPED — redactor failed for $SESSION_ID: $REDACT_LOG"
-    fi
-    rm -f "$RAW_DIR/.tmp.$$"
-  fi
-
-  # Prune whole date directories past the retention horizon. Compared by NAME
-  # (dirs are YYYY-MM-DD) not mtime, so re-touching an old archive — a backup
-  # pass, a filesystem copy — cannot silently extend its life.
-  RETAIN="${DEBRIEF_RAW_RETAIN_DAYS:-180}"
-  if [ "$RETAIN" -gt 0 ] 2>/dev/null; then
-    CUTOFF=$(python3 -c "import datetime,sys; print((datetime.date.today()-datetime.timedelta(days=int(sys.argv[1]))).isoformat())" "$RETAIN" 2>/dev/null)
-    if [ -n "$CUTOFF" ] && [ -d "$DEBRIEF_DIR/sessions/raw" ]; then
-      for d in "$DEBRIEF_DIR/sessions/raw"/*; do
-        [ -d "$d" ] || continue
-        b=$(basename "$d")
-        case "$b" in
-          [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
-            if [ "$b" \< "$CUTOFF" ]; then
-              rm -rf "$d" && log "raw-archive: pruned $b (retain ${RETAIN}d, cutoff $CUTOFF)"
-            fi
-            ;;
-        esac
-      done
-    fi
-  fi
-fi
 
 spawn_drafter "$TRANSCRIPT" "$SESSION_ID" "$ENDED_AT" "$REASON" "$OUT"
 log "spawned drafter for $SESSION_ID ($LINES lines, reason=$REASON) -> $OUT"
