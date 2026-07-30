@@ -1,7 +1,7 @@
 # claude-debrief
 
+> [!IMPORTANT]
 > ### Adopters
->
 > **Used by engineers from Databricks, Netflix, MicrosoftAI, Google, Amazon,
 > Capital One, and more. Adopted as the standard memory system at
 > Era Laboratories (engineers from xApple, xHP, xMIT Research, xIO (OpenAI)).**
