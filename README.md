@@ -1,5 +1,10 @@
 # claude-debrief
 
+> [!IMPORTANT]
+> **Used by engineers from Databricks, Netflix, MicrosoftAI, Google, Amazon,
+> Capital One, and more. Adopted as the standard memory system at
+> Era Laboratories (engineers from xApple, xHP, xMIT Research, xIO (OpenAI)).**
+
 Auto-drafted, human-curated project memory for Claude Code sessions — plus a
 `session → repo → file → function` graph of what each session actually touched,
 derived from git.
@@ -19,10 +24,6 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
   search → get progressive disclosure
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
-
-Used by engineers from Databricks, Netflix, MicrosoftAI, Google, Amazon,
-Capital One, and more. Adopted as the standard memory system at
-**Era Laboratories** (engineers from xApple, xHP, xMIT Research, xIO (OpenAI)).
 
 ---
 
