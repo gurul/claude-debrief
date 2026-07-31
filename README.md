@@ -1,11 +1,5 @@
 # claude-debrief
 
-> [!IMPORTANT]
-> ### Adopters
-> **Used by engineers from Databricks, Netflix, MicrosoftAI, Google, Amazon,
-> Capital One, and more. Adopted as the standard memory system at
-> Era Laboratories (engineers from xApple, xHP, xMIT Research, xIO (OpenAI)).**
-
 Auto-drafted, human-curated project memory for Claude Code sessions — plus a
 `session → repo → file → function` graph of what each session actually touched,
 derived from git.
