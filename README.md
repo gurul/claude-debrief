@@ -20,6 +20,8 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
 
+![The viewer's graph tab: session → repo → file → function drill-down, with the debrief open alongside](docs/assets/viewer-graph.jpg)
+
 ---
 
 ## The problem this solves
@@ -40,6 +42,26 @@ gate between them is the entire design.
 > If you take one idea from this repo, take that. The hook and the viewer are
 > implementation; the gate is the point.
 
+## Why not CLAUDE.md, mem0, or Basic Memory?
+
+Those tools store memory; none of them gate it.
+
+- **CLAUDE.md and auto-memory files** hold standing instructions, loaded into
+  every session whole. There is no episodic record, no provenance, and no way
+  to tell a verified conclusion from a confident guess that got written down.
+- **Automatic memory layers** (mem0-style) extract "facts" from conversations
+  and index them immediately — exactly the failure mode above: wrong
+  conclusions recorded as confidently as right ones, then served back with
+  authority.
+- **Notes-first tools** (Basic Memory–style) get the human-written part right
+  but capture nothing on their own; a session that ends without a note is
+  simply gone.
+
+claude-debrief is the combination: capture is automatic so nothing is lost,
+promotion is human so nothing is laundered, and retrieval indexes only what
+survived the gate. If you already use one of the tools above, the curation
+gate is the part you're missing — not the storage.
+
 ## Three layers
 
 | Layer | What | Mutability |
@@ -51,36 +73,13 @@ gate between them is the entire design.
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
 
-### The starred layer
-
-`INDEX.md` is deliberately lossy: it answers "what is true *now*", so an entry
-that stops being load-bearing gets rewired away. That is the right behavior for
-current understanding and the wrong behavior for a lesson you paid for once and
-must never relearn. Hence a third layer with the opposite promise.
-
-A highlight is a margin star in a book: rare, in-situ, and permanent. Two rules
-carry the whole design:
-
-1. **A human stars it.** Hooks and drafters may *propose* (`★ (candidate)` in a
-   session note); only `/debrief highlight`, or a human approving a candidate
-   during a day pass, promotes. An agent starring its own conclusions is the
-   laundering the curation gate exists to prevent.
-2. **No recurrence bar** — and that is the point. `INDEX.md` principles need ≥2
-   debriefs so the list stays short. Highlights are the escape hatch for the
-   one-shot lesson: the 3am root cause, the footgun that cost a day, the
-   constraint invisible in the code.
-
-Keep it short by raising the bar for *adding*, never by deleting. A wrong
-highlight is corrected by appending a superseding entry that names the one it
-replaces — the original stays, because what you believed and why is the record.
-
-Format is one `### ★ <one-line claim>` per entry under `## The starred list`,
-newest first, each ending `— from [<source>](<link>) · starred <date>`. Write
-entries to survive without their context: name the system, the mechanism and the
-consequence, and assume the reader has forgotten the incident entirely.
-
-Recall: `/debrief-highlights` (whole list, or `--starred` search), and plain
-`/debrief-search` ranks `★` hits above every other layer.
+The starred layer exists because `INDEX.md` answers "what is true *now*" — an
+entry that stops being load-bearing gets rewired away, which is the wrong
+behavior for a lesson you paid for once and must never relearn. `HIGHLIGHTS.md`
+holds rare, append-only `★` entries that only a **human** stars (agents may
+propose `★ (candidate)`, never promote), with no recurrence bar — the 3am root
+cause qualifies on first occurrence. Rationale and format:
+[docs/starred-layer.md](docs/starred-layer.md).
 
 ## Lifecycle
 
@@ -106,9 +105,8 @@ still leaves a record — and day mode can fall back to the raw transcript.
 
 Capture is automatic and draining is manual, so a backlog of uncurated drafts
 is the expected steady state, not a bug. The SessionStart nudge and the
-`/debrief-backlog` command exist to keep that backlog **in front of the human**
-(the SessionEnd sweep only ever logged it to `hook.log`, which nobody opens).
-Neither ever writes a daily — surfacing is not curation.
+`/debrief-backlog` command exist to keep that backlog in front of the human;
+neither ever writes a daily — surfacing is not curation.
 
 ## Install
 
@@ -158,8 +156,7 @@ drafter delaying session exit.
 
 **3. Wire the backlog nudge** in the same `.claude/settings.local.json`. This
 is what closes the loop: on a fresh session start it surfaces any uncurated
-backlog into the conversation, so the pile can't grow unseen the way it did
-before:
+backlog into the conversation, so the pile can't grow unseen:
 
 ```jsonc
 {
@@ -180,12 +177,10 @@ before:
 }
 ```
 
-`matcher: "startup"` restricts it to fresh launches (not resume/compact/clear);
-the script re-checks `source` as defence-in-depth. **Not** `async` — an async
-`SessionStart` hook cannot contribute context, which is the opposite of the
-SessionEnd drafter. `SessionStart` hook arrays compose across every settings
-file, so this runs alongside any other start hook you already have. It nudges at
-most once per day and stays silent on a clean queue.
+`matcher: "startup"` restricts it to fresh launches (not resume/compact/clear).
+**Not** `async` — an async `SessionStart` hook cannot contribute context, which
+is the opposite of the SessionEnd drafter. It nudges at most once per day and
+stays silent on a clean queue.
 
 **4. Seed the memory.** Keep `INDEX.md` (edit the template for your project) and
 delete the two example dailies plus `provenance.json` once you have real notes.
@@ -196,152 +191,10 @@ delete the two example dailies plus `provenance.json` once you have real notes.
 cp debrief/.system/repos.example.json debrief/.system/repos.json  # then edit
 ```
 
-## Configuration
-
-`.system/repos.json` — which working copies this memory spans. Paths resolve
-relative to `debrief/`, so `..` is the host repo and `../../peer` a sibling
-checkout:
-
-```json
-{
-  "repos": {
-    "my-app": "..",
-    "my-api": "../../my-api"
-  }
-}
-```
-
-Repos listed but missing on disk are skipped, so one config can cover a team
-whose members have different subsets checked out. **No `repos.json` → the
-builder no-ops** and leaves any existing `provenance.json` alone.
-
-## Code-provenance layer (the graph)
-
-The viewer's graph tab is a `session → repo → file → function` drill-down of the
-*actual files and functions* each debrief touched — not just concept
-`[[wikilinks]]`. `.system/build-provenance.mjs` derives it straight from git
-(`numstat` for files, hunk-header context for enclosing symbols) across every
-repo in `repos.json`, and writes `provenance.json`.
-
-**To appear in the graph, a debrief must declare its commits in frontmatter.**
-Bare SHAs (repo auto-resolved by searching each configured repo):
-
-```yaml
----
-commits: 38de2b6 8a1f902 ba606d6
----
-```
-
-or the explicit form, when you want to name repos and PRs:
-
-```yaml
----
-touched:
-  my-api: 9c81346 9bdcdc9
-prs:
-  my-api: 487 488
----
-```
-
-Both blocks accept the same grammar: bare SHAs, `a..b` / `a...b` ranges, and a
-`(repo)` annotation naming the repo for the entry it follows. Commas are
-separators. Ranges use **git semantics — `a..b` excludes `a`**; write `a^..b`
-to include it.
-
-```yaml
----
-commits: 09eca51..b90fce7 (era-maker), 07620fb..0ae57bb (era-device-api), f317a7c
----
-```
-
-Two layers, deliberately: the **auto** layer is whatever git reports; the
-**curated** layer is the SHAs a human decided count as this session's work. A
-debrief with no `commits:`/`touched:` simply won't appear — orientation days with
-no commits are legitimately absent.
-
-**Frontmatter is hand-written, so the builder never trusts it.** Every SHA is
-confirmed with `git cat-file` before any plumbing runs; anything that isn't a
-SHA, a range or an annotation is reported and skipped. A placeholder like
-`temperature-strip fix (hash not captured in draft)` costs you one warning and
-one absent node — it does not abort the build. Warnings name the document and
-the field, so an unresolved SHA points at the repo you forgot to configure:
-
-```
-2026-07-15-fluid-canvas.md [touched.era-firmware-rs]: unresolved commit 5d6fde7 (declared era-firmware-rs)
-```
-
-Rebuild on demand, or let the viewer's `predev`/`prebuild` hook do it:
-
-```bash
-node debrief/.system/build-provenance.mjs
-```
-
-Set `DEBRIEF_DIR` when the script runs from outside the memory it's building —
-a symlinked or vendored copy, or a monorepo task runner. Node resolves symlinks
-when computing a module's own path, so without it a symlinked builder reads the
-*clone's* `repos.json` and writes the *clone's* `provenance.json`:
-
-```bash
-DEBRIEF_DIR=/path/to/project/debrief node .system/build-provenance.mjs
-```
-
-## Search (the retrieval layer)
-
-`INDEX.md` is orientation; search is recall. `.system/debrief-search.py` gives
-ranked full-text retrieval over curated memory — stdlib `sqlite3` FTS5, no
-daemon, no dependencies. Two steps, so an agent fetches full text only for the
-hits that earned it:
-
-```bash
-python3 debrief/.system/debrief-search.py search "temperature opus" -n 8
-# [100] 2026-07-14 2026-07-14-explorer-….md §The EXP-28 staging outage — …«temperature» param left on the «Opus» variant…
-python3 debrief/.system/debrief-search.py get 100
-```
-
-Documents are chunked by heading; results are one line each (`[id] date doc
-§section — snippet`). The index (`.system/search.db`) rebuilds automatically
-whenever any source file changes. `get -C 1` adds neighboring sections from
-the same doc (target marked `▶`) when a hit lands mid-document — cheaper than
-Read-ing the whole file. Ranking is bm25 with one hardcoded, curation-aware
-weight vector: filename slugs and section headings (the most distilled human
-signal) weigh more than body text, metadata columns don't match at all, and
-dailies/INDEX get a mild tie-break multiplier over session notes. No knobs.
-
-The one exception is the starred layer, and it is a **sort key rather than a
-weight**: `HIGHLIGHTS.md` hits are ordered ahead of every other layer whenever
-they match, marked `★`. A multiplier cannot deliver that promise — a mild boost
-still loses to any competing filename or heading match, so "must-know surfaces
-first" would hold only when the term appeared nowhere else, i.e. the case that
-never needed help. Ordering on layer makes it unconditional and leaves the rest
-of the ranking untouched.
-
-```bash
-python3 debrief/.system/debrief-search.py stars                        # the ★ layer, whole, no query
-python3 debrief/.system/debrief-search.py search "waf" --starred       # ★ entries only
-```
-
-`stars` prints entries only — the file's own explanation of how starring works is
-scaffolding and is filtered out, so the cheap-recall path stays cheap.
-
-`debrief-search.py selftest` checks the invariants on a synthetic corpus —
-pass/fail only, never a score. The central assertion is the gate itself:
-machine-draft content must be unsearchable. The starred invariants assert against
-the *hard* case (a highlight must outrank a competing doc-title match), because
-an earlier multiplier-based implementation passed a synthetic test where the term
-lived only in `HIGHLIGHTS.md`, then lost on the real corpus.
-
-**The curation gate applies to retrieval too.** The index holds dailies,
-`INDEX.md`, and `status: curated` session notes — never machine drafts,
-archived or not. A draft's content becomes searchable only by surviving
-`/debrief day`. Searching drafts directly would hand back exactly the
-confidently-wrong memory this system exists to prevent; an empty result plus
-"that date needs a `/debrief day` pass" is the correct behavior, and
-`commands/debrief-search.md` (install next to `debrief.md`) says so to the
-agent in as many words.
-
-Query terms are AND-ed; valid FTS5 syntax (`"exact phrase"`, `OR`, `NOT`)
-passes through. `--dir` / `$DEBRIEF_DIR` override discovery, same as the
-provenance builder.
+**6. Enable the verbatim archive** (optional): add
+`"env": { "DEBRIEF_RAW_ARCHIVE": "1" }` to the SessionEnd hook entry to keep
+redacted, gzipped transcripts past Claude Code's ~30-day deletion — see
+[docs/verbatim-archive.md](docs/verbatim-archive.md) before turning it on.
 
 ## Viewer
 
@@ -354,10 +207,27 @@ npm run dev        # http://localhost:5199
 Vite + React. The graph tab is a vertically stacked drill-down tree —
 session → repo → file → function, newest first, spread open on first load —
 not a force simulation: dates read top-to-bottom and every level is a block
-you click into. Markdown is pulled in via
-`import.meta.glob` at dev time, so editing a note hot-reloads the graph. A fresh
-clone renders the shipped example fixture; point `repos.json` at real repos and
-it renders yours.
+you click into. Markdown is pulled in via `import.meta.glob` at dev time, so
+editing a note hot-reloads the graph. A fresh clone renders the shipped example
+fixture; point `repos.json` at real repos and it renders yours. A **verbatim**
+tab reads the cold-storage archive on explicit click, without ever indexing it.
+
+## Going deeper
+
+The design write-ups live in [`docs/`](docs/):
+
+- **[Provenance graph](docs/provenance.md)** — declare commits in debrief
+  frontmatter (`commits:` / `touched:`, SHAs and `a..b` ranges); the builder
+  verifies every SHA against git before it becomes a node.
+- **[Search](docs/search.md)** — two-step `search` → `get` retrieval, the
+  curation-aware ranking, and why `★` hits are a sort key rather than a weight.
+- **[Verbatim archive](docs/verbatim-archive.md)** — why summaries aren't
+  enough for sessions you didn't watch, the fail-closed redactor, retention,
+  and why the archive is never indexed.
+- **[Reliability](docs/reliability.md)** — the self-repair sweep, the
+  `pending → unconsumed → aggregated / failed` queue lifecycle, and backlog
+  surfacing.
+- **[Starred layer](docs/starred-layer.md)** — the append-only `★` contract.
 
 ## Rules
 
@@ -367,189 +237,14 @@ it renders yours.
   **flags** those claims — it does not launder them into fact.
 - Episodic files are immutable; corrections happen by rewiring INDEX.
 - **Never star anything on your own initiative.** `HIGHLIGHTS.md` is human-written
-  by definition — propose with `★ (candidate)`, never promote. And it is
-  append-only: a wrong highlight is superseded by a new entry naming it, never
-  edited or deleted.
+  by definition — propose with `★ (candidate)`, never promote. Append-only: a
+  wrong highlight is superseded by a new entry naming it, never edited.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
-- `sessions/raw/` is cold storage — **never indexed, never auto-read**, and
-  **redacted before it lands** (`redact-transcript.py`, fail-closed) with a
-  `DEBRIEF_RAW_RETAIN_DAYS` horizon. See "Verbatim archive" below. It
-  exists solely because Claude Code deletes transcripts after ~30 days
-  (opt-in: `DEBRIEF_RAW_ARCHIVE=1` on the hook). Day mode may fall back to it
-  when a live transcript is gone; nothing else touches it. Indexing it would
-  collapse the curation gate.
+- `sessions/raw/` is cold storage — **never indexed, never auto-read**, redacted
+  before it lands (fail-closed), pruned on a retention horizon. Indexing it
+  would collapse the curation gate.
 - Memory is gitignored. Never commit it.
-
-## Reliability
-
-Drafters die — observed in the wild as "API Error: Connection closed
-mid-response" and a logged-out CLI. The queue receipt outlives the drafter, so
-every session end runs a **self-repair sweep**: pending entries older than 15
-minutes whose draft never landed get respawned (max 3 attempts, then
-`status: failed`). A lock dir serializes concurrent session ends. The hook always
-exits 0 and logs to `.system/hook.log` — check there first when a draft doesn't
-appear.
-
-Guards: recursion (the drafter is itself a Claude session whose exit fires this
-hook — `DEBRIEF_GENERATION=1` breaks the loop), missing transcript, and trivial
-sessions (<30 transcript lines).
-
-The sweep treats an **archived** draft as proof of aggregation rather than a
-dead drafter. Day mode *moves* the drafts it consumes into
-`sessions/archive/<date>/`, which empties the original path — so without that
-check an aggregated session is indistinguishable from a failed one, and the
-sweep re-drafts already-curated work (one headless run per session end, three
-times, then marks it `failed` while its draft sits in the archive). It heals
-the status instead.
-
-`pending` means one thing only: **awaiting the drafter.** A draft that landed
-but that no `/debrief day` ever consumed used to keep that status forever, so
-an unread backlog grew invisibly (16 entries over two weeks in a live install).
-Entries whose draft is on disk and older than 24h now become `unconsumed`, and
-every sweep logs the count and the dates:
-
-```
-unconsumed-backlog: 8 drafts await a day-debrief (dates: 2026-07-06,2026-07-08,…)
-```
-
-Only `/debrief day <date>` clears it — archiving the draft flips the entry to
-`aggregated` via the heal above. Queue statuses in full: `pending` (drafter
-running) → `unconsumed` (draft waiting on curation) → `aggregated` (consumed by
-a daily), or `failed` (drafter died 3×, or its transcript is gone).
-
-That log line is the **detection** end of the loop; the **surfacing** end is a
-SessionStart hook, `.system/backlog-nudge.sh`, which on a fresh start injects a
-one-line backlog summary into the session (once per day, silent on a clean
-queue). `/debrief-backlog` is the human-facing view of the same queue —
-`.system/debrief-backlog.py` prints the exact `/debrief day <date>` command for
-each stranded date, oldest first. Both are strictly read-only: they never write
-a daily, `INDEX.md`, or a queue status. Draining stays a human `/debrief day`
-pass — the curation gate, unchanged.
-
-`failed` is **not terminal** when the material survives. `/debrief day` reads a
-failed entry's `transcript_path` directly, falling back to the raw cold archive;
-`debrief-backlog.py` labels each failed entry `recoverable` (transcript or raw
-on disk) or `terminal` (both gone) so you know which are worth a curation pass.
-`debrief-backlog.py selftest` and `backlog-selftest.sh` check these invariants —
-including that a scan leaves the queue byte-identical, and that the tools resolve
-their debrief dir through a symlinked install rather than back to this clone.
-
-## Verbatim archive (`sessions/raw/`) — redacted, retained, never indexed
-
-Off by default. Enable with `DEBRIEF_RAW_ARCHIVE=1` on the SessionEnd hook:
-
-```jsonc
-// ~/.claude/settings.local.json → hooks.SessionEnd[].hooks[]
-{
-  "type": "command",
-  "command": "$CLAUDE_PROJECT_DIR/_system/debrief/.system/session-debrief.sh",
-  "async": true,
-  "env": { "DEBRIEF_RAW_ARCHIVE": "1", "DEBRIEF_RAW_RETAIN_DAYS": "180" }
-}
-```
-
-### Why you'd want it
-
-Dailies and session notes are **summaries** — they keep the conclusions and drop
-the evidence. The archive is what you reach for when the conclusion isn't enough:
-
-| You need | Summary gives you | Archive gives you |
-|---|---|---|
-| **The exact file that broke** | "the WAF rejected plan bodies" | `terraform/environments/staging/main.tf:683`, the line and its value |
-| **The exact identifier** | "a CRS rule matched" | `owasp-crs-v030301-id932140-rce`, `priority 1000`, `body_denied_by_security_policy` |
-| **The exact command that proved it** | "verified in the cluster" | the literal `kubectl`/`gcloud` invocation and its output |
-| **What an overnight run actually did** | the agent's own account of itself | every tool call, in order, including the ones it didn't mention |
-
-That last row is the strongest reason. For autonomous sessions you did not watch,
-a self-written summary is the agent grading its own homework; the transcript is
-the only independent record. Concretely, `grep -l` over the archive answers *"which
-session touched this file, and what did it run?"* — a question the semantic layer
-is structurally unable to answer, because it stores understanding rather than acts.
-
-```bash
-# which archived session touched a file, and what did it do there?
-zgrep -l "SimulateStage.tsx" debrief/sessions/raw/*/*.jsonl.gz
-zgrep -h "kubectl -n tensorzero" debrief/sessions/raw/2026-07-24/*.jsonl.gz | head
-```
-
-### Redaction is not optional
-
-The transcript contains everything the tool calls echoed, and the leak vector is
-**not** credentials handled deliberately — it is third-party output that happens
-to carry one. Measured case: a LiveKit `access_token=eyJ…` arrived inside a
-Traefik access-log line during an unrelated outage investigation, and a raw
-archive would have banked it verbatim.
-
-So the transcript is piped through `.system/redact-transcript.py` before gzip.
-It scrubs JWTs, `Bearer` tokens, GitHub/Slack/Stripe/Google/AWS/OpenAI/Anthropic
-key shapes, PEM private-key blocks, `user:pass@host` URLs, and a broad
-`*password|*secret|*token|*api_key… = value` sweep — replacing each with
-`[REDACTED:<kind>]`.
-
-Three properties matter more than the pattern list:
-
-- **Output stays valid JSONL, line for line.** Day mode parses this as its
-  fallback; a redactor that corrupts structure destroys the only reason the
-  archive exists. Verified against a real 86-line transcript: 86 lines out, zero
-  invalid JSON, zero residual tokens.
-- **Fail closed.** A missing or failing redactor means **no archive**, not a raw
-  one. Same for a truncated pipe — gzip's exit status is not trusted, because
-  gzip succeeds happily on a truncated stream.
-- **Over-redaction is fine; under-redaction is not.** One deliberate exception:
-  `authorization` is spelled out rather than bare `auth`, so git JSON's
-  `"author":"…"` survives. Redacting every commit author would gut the audit
-  value the archive exists for.
-
-`redact-transcript.py --selftest` asserts all of it — including that a
-`DB_PASSWORD=` style key is caught (`\bpass` does **not** match inside
-`DB_PASSWORD`, because `_` is a word character; the selftest caught that bug).
-
-### Retention
-
-`DEBRIEF_RAW_RETAIN_DAYS` (default **180**) prunes whole date directories past
-the horizon on each hook run. Compared by directory **name**, not mtime, so a
-backup pass or filesystem copy cannot silently extend an archive's life. Set `0`
-to disable pruning — but "forever" is otherwise a decision you make once, by
-accident, and cannot undo.
-
-Volume is not the constraint: measured at ~0.6–3.5 MB/day raw, ~59% after gzip —
-roughly **1 MB/day, ~365 MB/year**.
-
-### Still never indexed
-
-Stored as `.jsonl.gz`, structurally invisible to `debrief-search.py`'s
-`collect()` (non-`.md`, no curated frontmatter). This is deliberate and load
-bearing: the moment raw transcripts become searchable, unverified machine claims
-re-enter memory through the back door — exactly what the curation gate exists to
-prevent. The archive is insurance and audit, never a search corpus.
-
-### Reading one anyway — the `verbatim` tab
-
-Never-indexed is not never-readable. The viewer has a **verbatim** tab that lists
-every archive by day and renders one on click. Decompression happens in the
-browser (`DecompressionStream`), on an explicit human action, and nothing is
-written back to disk — so the `.jsonl.gz` on disk stays the only copy and stays
-invisible to retrieval.
-
-Two things it deliberately does not show:
-
-- **Tool results.** Only the tool *name*, as a chip. Re-reading raw tool output
-  is the most common way a refuted intermediate conclusion gets laundered back
-  into memory as fact.
-- **Reasoning blocks.** Shown as a `reasoning` chip, never as text, for the same
-  reason.
-
-The pane carries a standing "unverified, evidence not memory" banner and is
-styled plainer than the curated layers, because the styling should not invite a
-trust the content has not earned.
-
-**The agent rule.** An agent must not read these archives on its own initiative —
-only when a human names a specific session and asks. Everything in raw is
-unverified by construction: every abandoned theory and misread file survives
-verbatim with nothing marking it wrong. Drop a note stating this into
-`sessions/raw/README.md` in your live install (that path is gitignored here, so
-it cannot ship from this repo).
 
 ## Cost / tuning
 
@@ -581,11 +276,10 @@ debrief/
     build-provenance.mjs    # git → provenance.json
     debrief-search.py       # FTS5 retrieval over curated memory (+ stars / --starred)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
-    search.db               # generated by debrief-search.py; gitignored
-    .backlog-nudge          # generated: once-per-day nudge stamp; gitignored
     repos.example.json      # copy to repos.json
     prompts/session-draft.md
   viewer/                   # Vite + React memory viewer
+docs/                       # design write-ups (provenance, search, archive, reliability, ★)
 commands/
   debrief.md                # install to ~/.claude/commands/
   debrief-backlog.md        # install alongside — /debrief-backlog (what needs curating)
@@ -601,3 +295,7 @@ commands/
 - **Curation doesn't scale by itself.** `/debrief day` is a real human pass. If
   you skip it for a week, you have a pile of drafts, not memory — which is the
   honest failure mode, and better than a confident wrong index.
+
+## License
+
+[MIT](LICENSE)
