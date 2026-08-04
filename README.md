@@ -62,13 +62,14 @@ promotion is human so nothing is laundered, and retrieval indexes only what
 survived the gate. If you already use one of the tools above, the curation
 gate is the part you're missing — not the storage.
 
-## Three layers
+## Four layers
 
 | Layer | What | Mutability |
 |---|---|---|
 | **Episodic** | Daily debriefs (`YYYY-MM-DD-<slug>.md`) and per-session notes (`sessions/`) | Immutable once written |
 | **Semantic** | `INDEX.md` — table + `[[entity]]` glossary + principles | Pruned and **rewired** toward current understanding |
 | **Starred** | `HIGHLIGHTS.md` — `★` must-know-forever entries | Append-only; **never pruned** |
+| **Todo** | `TODO.md` — open threads a human chose to track until resolved | Items open and close; closed items pruned once their closing daily records the outcome |
 
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
@@ -81,6 +82,15 @@ propose `★ (candidate)`, never promote), with no recurrence bar — the 3am ro
 cause qualifies on first occurrence. Rationale and format:
 [docs/starred-layer.md](docs/starred-layer.md).
 
+The todo layer exists because episodic files are immutable and read by date:
+every draft and daily records **Open threads**, but a thread opened Tuesday is
+invisible by Friday unless someone rereads Tuesday. `TODO.md` holds the ones a
+human chose to track, visible until resolved — same gate as everything else
+(`/debrief day` proposes candidates and closures, a person approves;
+`/debrief-todos add`/`done` is the immediate human-authored path). Admit only
+what would otherwise be lost — if the list outgrows a screen, the bar was too
+low. Rationale: [docs/todo-layer.md](docs/todo-layer.md).
+
 ## Lifecycle
 
 ```
@@ -91,9 +101,10 @@ session ends ──SessionEnd hook──▶ .system/session-debrief.sh
 
 /debrief       (optional, in-session) ─▶ sessions/<date>/<HHMM>-<slug>.md      status: curated
 /debrief day   (end of day, manual)   ─▶ synthesize <date>-<slug>.md  ─▶ review with the human
-                                       ─▶ update INDEX.md  ─▶ offer ★ candidates  ─▶ archive drafts
+                                       ─▶ update INDEX.md  ─▶ offer ★ + todo candidates  ─▶ archive drafts
 
 /debrief highlight <thing>  (human, any time) ─▶ appends ★ entry to HIGHLIGHTS.md   (never pruned)
+/debrief-todos [add|done]   (human, any time) ─▶ shows / updates TODO.md open-threads tracker
 
 session starts ──SessionStart hook──▶ .system/backlog-nudge.sh
                                         └─ once/day, if the queue is non-empty: nudges the human to
@@ -115,8 +126,8 @@ Copy this repo's contents into your project as `debrief/`:
 ```bash
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p /path/to/your-repo/debrief
-cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,README.md} /path/to/your-repo/debrief/
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights
+cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,README.md} /path/to/your-repo/debrief/
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -182,8 +193,9 @@ backlog into the conversation, so the pile can't grow unseen:
 is the opposite of the SessionEnd drafter. It nudges at most once per day and
 stays silent on a clean queue.
 
-**4. Seed the memory.** Keep `INDEX.md` (edit the template for your project) and
-delete the two example dailies plus `provenance.json` once you have real notes.
+**4. Seed the memory.** Keep `INDEX.md` and `TODO.md` (edit the templates for
+your project) and delete the two example dailies plus `provenance.json` once
+you have real notes.
 
 **5. Configure the graph** (optional):
 
@@ -228,6 +240,8 @@ The design write-ups live in [`docs/`](docs/):
   `pending → unconsumed → aggregated / failed` queue lifecycle, and backlog
   surfacing.
 - **[Starred layer](docs/starred-layer.md)** — the append-only `★` contract.
+- **[Todo layer](docs/todo-layer.md)** — open threads tracked until resolved,
+  the same human gate, and why search doesn't index the checklist.
 
 ## Rules
 
@@ -239,6 +253,10 @@ The design write-ups live in [`docs/`](docs/):
 - **Never star anything on your own initiative.** `HIGHLIGHTS.md` is human-written
   by definition — propose with `★ (candidate)`, never promote. Append-only: a
   wrong highlight is superseded by a new entry naming it, never edited.
+- **Never file or close a todo on your own initiative.** `TODO.md` admissions and
+  closures go through the day-mode review or the human's explicit word via
+  `/debrief-todos` — an agent filing its own todos manufactures work; one
+  closing them declares work done that nobody verified.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
 - `sessions/raw/` is cold storage — **never indexed, never auto-read**, redacted
@@ -259,6 +277,7 @@ invocation in `.system/session-debrief.sh`. To change what counts as
 debrief/
   INDEX.md                  # semantic layer (template — edit for your project)
   HIGHLIGHTS.md             # starred layer — ★ must-know-forever (append-only, never pruned)
+  TODO.md                   # todo layer — open threads tracked until resolved (human-gated)
   README.md                 # this file
   YYYY-MM-DD-<slug>.md      # daily debriefs (episodic)
   provenance.json           # generated; example fixture ships with the repo
@@ -285,6 +304,7 @@ commands/
   debrief-backlog.md        # install alongside — /debrief-backlog (what needs curating)
   debrief-search.md         # install alongside — /debrief-search <query>
   debrief-highlights.md     # install alongside — /debrief-highlights [query] (the ★ layer)
+  debrief-todos.md          # install alongside — /debrief-todos [add|done] (the todo layer)
 ```
 
 ## Known edges
