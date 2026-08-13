@@ -15,6 +15,7 @@ track, visible until each one is resolved.
 | Episodic | what happened | immutable |
 | Semantic — `INDEX.md` | what is true now | pruned and rewired |
 | Starred — `HIGHLIGHTS.md` | what must never be relearned | append-only |
+| Observations — `OBSERVATIONS.md` | what might be a pattern, and how much evidence it has | entries accumulate receipts; leave on promotion or refutation |
 | **Todo — `TODO.md`** | **what is still open now** | items open and close; closed items pruned once their closing daily exists |
 
 Like `INDEX.md`, it is deliberately lossy — it answers a *now* question, so

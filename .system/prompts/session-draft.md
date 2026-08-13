@@ -42,7 +42,12 @@ a one-line proposed definition — or "none">
 
 ## Candidate principle observations
 <recurring-pattern observations that might one day be promoted to INDEX principles
-— or "none">
+— or "none". Each observation carries ONE line of quoted evidence from THIS
+transcript (an error string, a command + its output, a sentence someone actually
+said) — the transcript is deleted in ~30 days, so the quote you capture now is
+the receipt the observation carries forever. An observation you cannot quote
+evidence for is a guess: leave it out. Keep the hedge — "seemed to", "in this
+session" — a draft observation is one sighting, not a law.>
 ```
 
 4. Return a single line stating the output path — nothing else.

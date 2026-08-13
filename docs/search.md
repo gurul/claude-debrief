@@ -59,6 +59,15 @@ result plus "that date needs a `/debrief day` pass" is the correct behavior,
 and `commands/debrief-search.md` (install next to `debrief.md`) says so to the
 agent in as many words.
 
+The living surfaces are also deliberately unindexed: `TODO.md` and
+`OBSERVATIONS.md` are excluded by construction (top-level, no date prefix) and
+by intent. Both answer *now* questions read whole — `/debrief-todos` and
+`/debrief-dreams` are their recall paths — and both would misreport through
+search snapshots: a pruned todo surfacing as open, a 1-daily `watching` entry
+reading like settled truth. The dailies that opened, closed, and receipted
+every entry *are* indexed; the reasoning is searchable, the checklists are
+not. The selftest plants markers in both files and asserts they never match.
+
 Query terms are AND-ed; valid FTS5 syntax (`"exact phrase"`, `OR`, `NOT`)
 passes through. `--dir` / `$DEBRIEF_DIR` override discovery, same as the
 provenance builder.

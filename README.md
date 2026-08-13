@@ -62,7 +62,7 @@ promotion is human so nothing is laundered, and retrieval indexes only what
 survived the gate. If you already use one of the tools above, the curation
 gate is the part you're missing — not the storage.
 
-## Four layers
+## Five layers
 
 | Layer | What | Mutability |
 |---|---|---|
@@ -70,6 +70,7 @@ gate is the part you're missing — not the storage.
 | **Semantic** | `INDEX.md` — table + `[[entity]]` glossary + principles | Pruned and **rewired** toward current understanding |
 | **Starred** | `HIGHLIGHTS.md` — `★` must-know-forever entries | Append-only; **never pruned** |
 | **Todo** | `TODO.md` — open threads a human chose to track until resolved | Items open and close; closed items pruned once their closing daily records the outcome |
+| **Observations** | `OBSERVATIONS.md` — cross-session patterns under watch, each with receipts | Entries accumulate receipts; leave on promotion or refutation |
 
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
@@ -91,6 +92,20 @@ human chose to track, visible until resolved — same gate as everything else
 what would otherwise be lost — if the list outgrows a screen, the bar was too
 low. Rationale: [docs/todo-layer.md](docs/todo-layer.md).
 
+The observations layer (the *dream layer*) exists because recurrence is
+currently counted in the human's head: every draft ends with candidate
+principle observations, and they die with the archived draft — a pattern seen
+once in January is invisible in March. `OBSERVATIONS.md` holds patterns under
+watch, each entry carrying **receipts** (one `— seen in` line per sighting,
+citing a curated daily with a verbatim quote) and a status (`watching` /
+`contested` / promoted / refuted). Evidence is counted in distinct dailies; at
+≥2, `/debrief dream` — the manual cross-session pass — may propose promotion
+to an INDEX principle, receipts attached. Disagreements between dailies are
+preserved as `contested` pairs, never resolved last-write-wins. Same gate as
+everything else: passes propose, a person approves, `/debrief-dreams add` is
+the immediate human-authored path. Rationale:
+[docs/dream-layer.md](docs/dream-layer.md).
+
 ## Lifecycle
 
 ```
@@ -105,6 +120,11 @@ session ends ──SessionEnd hook──▶ .system/session-debrief.sh
 
 /debrief highlight <thing>  (human, any time) ─▶ appends ★ entry to HIGHLIGHTS.md   (never pruned)
 /debrief-todos [add|done]   (human, any time) ─▶ shows / updates TODO.md open-threads tracker
+
+/debrief dream    (manual, cross-session)  ─▶ read dailies since last pass ─▶ propose sightings,
+                                              new observations, contested pairs, ≥2-daily promotions
+                                            ─▶ human approves item by item ─▶ OBSERVATIONS.md
+/debrief-dreams [add]       (human, any time) ─▶ shows / appends to OBSERVATIONS.md watchlist
 
 session starts ──SessionStart hook──▶ .system/backlog-nudge.sh
                                         └─ once/day, if the queue is non-empty: nudges the human to
@@ -126,8 +146,8 @@ Copy this repo's contents into your project as `debrief/`:
 ```bash
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p /path/to/your-repo/debrief
-cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,README.md} /path/to/your-repo/debrief/
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos
+cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,OBSERVATIONS.md,README.md} /path/to/your-repo/debrief/
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos + /debrief-dreams
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -193,9 +213,9 @@ backlog into the conversation, so the pile can't grow unseen:
 is the opposite of the SessionEnd drafter. It nudges at most once per day and
 stays silent on a clean queue.
 
-**4. Seed the memory.** Keep `INDEX.md` and `TODO.md` (edit the templates for
-your project) and delete the two example dailies plus `provenance.json` once
-you have real notes.
+**4. Seed the memory.** Keep `INDEX.md`, `TODO.md`, and `OBSERVATIONS.md`
+(edit the templates for your project) and delete the two example dailies plus
+`provenance.json` once you have real notes.
 
 **5. Configure the graph** (optional):
 
@@ -242,6 +262,9 @@ The design write-ups live in [`docs/`](docs/):
 - **[Starred layer](docs/starred-layer.md)** — the append-only `★` contract.
 - **[Todo layer](docs/todo-layer.md)** — open threads tracked until resolved,
   the same human gate, and why search doesn't index the checklist.
+- **[Dream layer](docs/dream-layer.md)** — cross-session patterns with
+  receipts, the `watching`/`contested` statuses, why disagreements are
+  preserved rather than resolved, and the inceptions future-work sketch.
 
 ## Rules
 
@@ -257,6 +280,11 @@ The design write-ups live in [`docs/`](docs/):
   closures go through the day-mode review or the human's explicit word via
   `/debrief-todos` — an agent filing its own todos manufactures work; one
   closing them declares work done that nobody verified.
+- **Never admit, promote, or refute an observation on your own initiative.**
+  `OBSERVATIONS.md` changes go through the dream-pass (or day-mode) review or
+  `/debrief-dreams add` — an agent promoting its own observation manufactures
+  a law from an anecdote. Receipts cite curated dailies only, with quotes that
+  string-match the source; nothing with 1 daily is proposed for promotion.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
 - `sessions/raw/` is cold storage — **never indexed, never auto-read**, redacted
@@ -278,6 +306,7 @@ debrief/
   INDEX.md                  # semantic layer (template — edit for your project)
   HIGHLIGHTS.md             # starred layer — ★ must-know-forever (append-only, never pruned)
   TODO.md                   # todo layer — open threads tracked until resolved (human-gated)
+  OBSERVATIONS.md           # dream layer — patterns under watch, with receipts (human-gated)
   README.md                 # this file
   YYYY-MM-DD-<slug>.md      # daily debriefs (episodic)
   provenance.json           # generated; example fixture ships with the repo
@@ -305,6 +334,7 @@ commands/
   debrief-search.md         # install alongside — /debrief-search <query>
   debrief-highlights.md     # install alongside — /debrief-highlights [query] (the ★ layer)
   debrief-todos.md          # install alongside — /debrief-todos [add|done] (the todo layer)
+  debrief-dreams.md         # install alongside — /debrief-dreams [add] (the dream layer)
 ```
 
 ## Known edges

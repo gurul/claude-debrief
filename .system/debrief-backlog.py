@@ -27,6 +27,7 @@ provenance builder documents.
 """
 
 import argparse
+import datetime as _dt
 import json
 import os
 import sys
@@ -117,8 +118,18 @@ def _plural(n):
     return "" if n == 1 else "s"
 
 
-def render_nudge(unconsumed, failed):
-    """One line for the SessionStart hook; empty string on a clean queue."""
+# A backlog older than this sharpens the nudge. Escalation is by AGE, never by
+# repetition — the once-a-day stamp already caps frequency.
+STALE_BACKLOG_DAYS = 3
+
+
+def render_nudge(unconsumed, failed, today=None):
+    """One line for the SessionStart hook; empty string on a clean queue.
+
+    Not a status line — an instruction to OFFER the curation pass, so a single
+    "yes" from the user starts `/debrief day <oldest>`. The offer is still the
+    gate: declined means dropped, and nothing here ever curates on its own.
+    """
     n = sum(unconsumed.values())
     recoverable = sum(1 for _, ok, _ in failed if ok)
     terminal = sum(1 for _, ok, _ in failed if not ok)
@@ -132,7 +143,24 @@ def render_nudge(unconsumed, failed):
         segs.append(f"{terminal} failed terminal")
     if not segs:
         return ""
-    return "DEBRIEF BACKLOG: " + "; ".join(segs) + ". Run /debrief-backlog."
+    line = "DEBRIEF BACKLOG: " + "; ".join(segs) + "."
+    if not unconsumed:
+        # Only failed entries: nothing to day-pass yet; point at the report.
+        return line + " Run /debrief-backlog."
+    oldest = min(unconsumed)
+    if today is None:
+        today = _dt.date.today()
+    try:
+        age_days = (today - _dt.date.fromisoformat(oldest)).days
+    except ValueError:
+        age_days = STALE_BACKLOG_DAYS  # unparseable date: fail toward urgency
+    if age_days >= STALE_BACKLOG_DAYS:
+        line += " Memory from that work is going stale."
+    return (
+        line
+        + f" Offer to run /debrief day {oldest} for the user now"
+        + " (~2 min; one pass per date clears it). If declined, drop it and continue."
+    )
 
 
 def render_full(unconsumed, failed):
@@ -276,6 +304,19 @@ def cmd_selftest():
             "nudge: separates recoverable from terminal failed",
             "2 failed still recoverable" in nudge and "1 failed terminal" in nudge,
             repr(nudge),
+        )
+        check(
+            "nudge: offers the exact /debrief day command, decline is allowed",
+            "Offer to run /debrief day 2026-01-05" in nudge
+            and "If declined, drop it and continue." in nudge,
+            repr(nudge),
+        )
+        fresh = render_nudge(un, fa, today=_dt.date(2026, 1, 6))
+        stale = render_nudge(un, fa, today=_dt.date(2026, 1, 9))
+        check(
+            "nudge: escalates by backlog age, never by repetition",
+            "going stale" not in fresh and "going stale" in stale,
+            f"fresh={fresh!r} stale={stale!r}",
         )
         full = render_full(un, fa)
         check(

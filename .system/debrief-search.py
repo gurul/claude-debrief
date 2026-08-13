@@ -341,6 +341,15 @@ def cmd_selftest():
             "sessions/archive/2026-01-04/1100-old.md",
             "---\nstatus: machine-draft\n---\n\n# Old draft\n\nzanzibar again.\n",
         )
+        # Living surfaces stay out of the index by construction (top-level,
+        # undated): a stale open item or a 1-daily watching entry surfacing in
+        # search would misreport current state. Plant markers to prove it.
+        w("TODO.md", "# Todo\n\n## Open\n\n- [ ] xylophone thread still open.\n")
+        w(
+            "OBSERVATIONS.md",
+            "# Observations\n\n## Watching\n\n### Watching: quagga pattern\n\n"
+            "— status: watching · 1 daily\n",
+        )
 
         docs = {rel for rel, _, _ in collect(td)}
         check(
@@ -385,6 +394,15 @@ def cmd_selftest():
             "SELECT doc FROM chunks WHERE chunks MATCH 'zanzibar'"
         ).fetchall()
         check("gate: draft-only content unsearchable", leaked == [], f"leaked {leaked}")
+
+        living = db.execute(
+            "SELECT doc FROM chunks WHERE chunks MATCH 'xylophone OR quagga'"
+        ).fetchall()
+        check(
+            "gate: living surfaces (TODO, OBSERVATIONS) unsearchable",
+            living == [],
+            f"leaked {living}",
+        )
 
         meta_hit = db.execute(
             "SELECT doc FROM chunks WHERE chunks MATCH 'daily'"
