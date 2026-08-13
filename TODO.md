@@ -14,6 +14,7 @@ visible until it is resolved*.
 | Episodic — dailies, `sessions/` | what happened | immutable |
 | Semantic — [`INDEX.md`](INDEX.md) | what is true now | pruned and rewired |
 | Starred — [`HIGHLIGHTS.md`](HIGHLIGHTS.md) | what must never be relearned | append-only |
+| Observations — [`OBSERVATIONS.md`](OBSERVATIONS.md) | what might be a pattern, and how much evidence it has | entries accumulate receipts; leave on promotion or refutation |
 | **Todo — this file** | **what is still open now** | items open and close; closed items are pruned once their closing daily records the outcome |
 
 ## The rules

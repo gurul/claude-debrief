@@ -47,9 +47,12 @@ LINE="$(DEBRIEF_DIR="$DEBRIEF_DIR" python3 "$SYSTEM_DIR/debrief-backlog.py" --nu
 [ -n "$LINE" ] || exit 0
 
 # additionalContext lands in Claude's context, not on the user's screen; phrase
-# it as an imperative Claude reliably relays, and restate the gate so no
-# downstream step is tempted to auto-drain the backlog into memory.
-CONTEXT="Before your first reply, tell the user this debrief backlog: ${LINE} Only a human /debrief day pass promotes drafts into durable memory — never auto-write a daily or touch INDEX.md."
+# it as an imperative Claude reliably relays. The LINE already carries the
+# offer ("offer to run /debrief day <oldest>… if declined, drop it") — one
+# "yes" from the user starts the pass. Restate the gate so no downstream step
+# is tempted to auto-drain the backlog into memory: the offer is the ONLY
+# automation here, and a declined offer changes nothing.
+CONTEXT="Before your first reply, relay this to the user: ${LINE} Only a human /debrief day pass promotes drafts into durable memory — never auto-write a daily or touch INDEX.md, and never start the pass without the user's yes."
 python3 - "$CONTEXT" <<'PY'
 import json, sys
 print(json.dumps({"hookSpecificOutput": {

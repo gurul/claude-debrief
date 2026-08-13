@@ -5,7 +5,7 @@
 > your own. Everything else in `debrief/` is episodic and immutable; this file is
 > the one that gets *rewired*.
 
-## How this memory works (three layers)
+## How this memory works (five layers)
 
 - **Episodic** — immutable records of what happened and why: daily debriefs
   (`YYYY-MM-DD-<slug>.md`) and, below them, per-session notes in `sessions/`.
@@ -15,6 +15,11 @@
   a short list of principles. Pruned and rewired toward current best understanding.
 - **Starred** — [`HIGHLIGHTS.md`](HIGHLIGHTS.md). The `★` must-know-forever list.
   Append-only and **never pruned**.
+- **Todo** — [`TODO.md`](TODO.md). Open threads a human chose to track until
+  resolved.
+- **Observations** — [`OBSERVATIONS.md`](OBSERVATIONS.md). Cross-session
+  patterns under watch, each with receipts; the staging area a principle
+  graduates from.
 
 Corrections happen *here*, by rewiring — not by editing history.
 
@@ -26,14 +31,21 @@ when superseded. That makes it the wrong home for a lesson you must never relear
 ## Principles (attractors)
 
 Promote a principle only once it has recurred in **≥2 debriefs**. One-offs are
-observations, not principles; the bar exists so this list stays short enough to
-actually carry into a session. A one-off that must never be relearned isn't a
-principle — star it in [`HIGHLIGHTS.md`](HIGHLIGHTS.md) instead.
+observations, not principles — park them in
+[`OBSERVATIONS.md`](OBSERVATIONS.md) to accumulate receipts; the bar exists so
+this list stays short enough to actually carry into a session. A one-off that
+must never be relearned isn't a principle — star it in
+[`HIGHLIGHTS.md`](HIGHLIGHTS.md) instead.
+
+Every principle cites the debriefs that earned it. A principle without
+receipts is a slogan.
 
 1. *(example)* **Verify at the boundary you claim.** A green type-check is not a
    working feature — exercise the real path before calling it done.
+   — from [2026-01-04 auth session cutover](2026-01-04-auth-session-cutover.md) · [2026-01-05 payments retry loop](2026-01-05-payments-retry-loop.md)
 2. *(example)* **Root cause before patch.** A retry that hides a deadlock is debt
    with a due date.
+   — from [2026-01-04 auth session cutover](2026-01-04-auth-session-cutover.md) · [2026-01-05 payments retry loop](2026-01-05-payments-retry-loop.md)
 
 ## Debriefs (newest first)
 
