@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.claude-debrief.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@@DEBRIEF_DIR@@/.system/debrief-daemon.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>@@HOME@@</string>
+    <key>DEBRIEF_AUTO_CURATE</key>
+    <string>@@AUTO_CURATE@@</string>
+    <key>DEBRIEF_RAW_ARCHIVE</key>
+    <string>@@RAW_ARCHIVE@@</string>
+    <key>DEBRIEF_RAW_RETAIN_DAYS</key>
+    <string>@@RETAIN_DAYS@@</string>
+  </dict>
+  <!-- At login/boot, then every 15 min. launchd coalesces intervals missed
+       while asleep into one run on wake, so a lid-close catches up too. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <!-- The daemon starts drafters and curators in the background and exits;
+       without this, launchd kills them the moment the script returns. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@@DEBRIEF_DIR@@/.system/daemon.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@DEBRIEF_DIR@@/.system/daemon.out.log</string>
+</dict>
+</plist>

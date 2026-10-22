@@ -10,6 +10,9 @@ SYSTEM_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEBRIEF_DIR="$(dirname "$SYSTEM_DIR")"
 LOG="$SYSTEM_DIR/hook.log"
 QUEUE="$DEBRIEF_DIR/sessions/queue.jsonl"
+# As a global hook this fires from any project, so the drafter and curator
+# run from the memory's root, where every debrief/ path resolves.
+cd "$(dirname "$DEBRIEF_DIR")" || exit 0
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
 
@@ -105,13 +108,17 @@ TRANSCRIPT: $transcript
 SESSION_ID: $sid
 ENDED: $ended (reason: $reason)
 OUTPUT FILE: $out"
+  # Opt-in auto-curation (DEBRIEF_AUTO_CURATE=1): once the draft lands,
+  # curate-day.sh folds it into its day with no review step. If that never
+  # runs (shutdown, crash), debrief-daemon.sh catches the day up.
   nohup env DEBRIEF_GENERATION=1 bash -c '
     claude -p "$1" --allowedTools "Read,Glob,Grep,Write" >>"$2" 2>&1
     rc=$?
     state=MISSING; [ -f "$4" ] && state=present
     printf "%s drafter for %s exited rc=%s (draft %s)\n" \
       "$(date "+%Y-%m-%dT%H:%M:%S%z")" "$3" "$rc" "$state" >>"$2"
-  ' _ "$prompt" "$LOG" "$sid" "$out" >/dev/null 2>&1 &
+    [ "$state" = present ] && [ "$7" = 1 ] && bash "$5/curate-day.sh" "$6"
+  ' _ "$prompt" "$LOG" "$sid" "$out" "$SYSTEM_DIR" "${ended%%T*}" "${DEBRIEF_AUTO_CURATE:-}" >/dev/null 2>&1 &
 }
 
 # --- Self-repair sweep -------------------------------------------------
@@ -166,7 +173,7 @@ for line in open(queue):
     # flips the entry to `aggregated` via the heal above).
     if d.get("status") == "pending" and os.path.exists(draft):
         try:
-            ended = datetime.strptime(d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
+            ended = datetime.strptime(d.get("queued_at") or d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
             unread = (now - ended) > timedelta(hours=24)
         except Exception:
             unread = True
@@ -174,7 +181,7 @@ for line in open(queue):
             d["status"] = "unconsumed"
     if d.get("status") == "pending" and not os.path.exists(draft):
         try:
-            ended = datetime.strptime(d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
+            ended = datetime.strptime(d.get("queued_at") or d["ended_at"], "%Y-%m-%dT%H:%M:%S%z")
             stale = (now - ended) > timedelta(minutes=15)
         except Exception:
             stale = True
@@ -241,9 +248,11 @@ if [ ! -f "${TRANSCRIPT:-}" ]; then
   exit 0
 fi
 
-ENDED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-DATE="$(date +%Y-%m-%d)"
-TIME="$(date +%H%M)"
+# Stamp from the transcript's last write, not the clock: the same at a live
+# SessionEnd, and the right day when the daemon backfills an old session.
+ENDED_AT="$(date -r "$TRANSCRIPT" '+%Y-%m-%dT%H:%M:%S%z')"
+DATE="$(date -r "$TRANSCRIPT" +%Y-%m-%d)"
+TIME="$(date -r "$TRANSCRIPT" +%H%M)"
 
 # Archive first, unconditionally. Nothing below this line may cause a session
 # to go unrecorded.
@@ -260,12 +269,13 @@ mkdir -p "$OUT_DIR"
 
 # Durable record even if the drafter fails. One JSON object per line.
 SESSION_ID="$SESSION_ID" TRANSCRIPT="$TRANSCRIPT" REASON="$REASON" \
-ENDED_AT="$ENDED_AT" DRAFT="$OUT" python3 -c '
+ENDED_AT="$ENDED_AT" QUEUED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')" DRAFT="$OUT" python3 -c '
 import json, os
 print(json.dumps({
     "session_id": os.environ["SESSION_ID"],
     "transcript_path": os.environ["TRANSCRIPT"],
     "ended_at": os.environ["ENDED_AT"],
+    "queued_at": os.environ["QUEUED_AT"],
     "reason": os.environ["REASON"],
     "draft": os.environ["DRAFT"],
     "status": "pending",

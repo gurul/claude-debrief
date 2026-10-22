@@ -228,6 +228,53 @@ cp debrief/.system/repos.example.json debrief/.system/repos.json  # then edit
 redacted, gzipped transcripts past Claude Code's ~30-day deletion — see
 [docs/verbatim-archive.md](docs/verbatim-archive.md) before turning it on.
 
+## Automatic mode and the catch-up daemon (opt-in)
+
+For people who want an archive of everything rather than a curated memory,
+two opt-in pieces trade the human gate for coverage. Both are off unless you
+turn them on.
+
+**Automatic curation** (`DEBRIEF_AUTO_CURATE=1`): after a draft lands,
+`.system/curate-day.sh` runs `/debrief day` headless for that session's date
+with the review step waived (`.system/prompts/auto-day.md`). It still marks
+draft claims unverified, appends late-day addenda rather than rewriting, and
+never writes outside `debrief/`. One curator runs at a time. Its lock holds a
+PID, so a lock left by a machine that powered off is taken over.
+
+**The daemon** (`.system/debrief-daemon.sh`, a launchd agent): the
+`SessionEnd` hook never fires when you close the lid, kill the terminal or
+power off straight after working. The daemon runs at login, on wake and
+every 15 min, and repairs whatever was left unfinished:
+
+1. clears locks orphaned by a shutdown;
+2. runs the hook's repair sweep (drafters that never wrote);
+3. hands every transcript in `~/.claude/projects/*`, idle for 30 min and
+   never queued, to the `SessionEnd` pipeline. This is also how a backlog of
+   past sessions is worked off, 3 per run, each filed under the day it
+   happened (session stamps come from the transcript, not the clock);
+4. with auto-curation on, folds in any day whose drafts no curator consumed.
+
+The daemon's own headless sessions (drafter, curator) are recognised by their
+opening prompt and skipped.
+
+Install (macOS) with the memory at `~/claude-memory/debrief` and the hook
+global, so sessions from every project land in it:
+
+```bash
+# ~/.claude/settings.json: hooks.SessionEnd -> <memory>/debrief/.system/session-debrief.sh (async),
+# plus "env": {"DEBRIEF_AUTO_CURATE": "1", "DEBRIEF_RAW_ARCHIVE": "1", "DEBRIEF_RAW_RETAIN_DAYS": "0"}
+D=~/claude-memory/debrief
+sed -e "s#@@DEBRIEF_DIR@@#$D#g" -e "s#@@HOME@@#$HOME#g" -e "s#@@AUTO_CURATE@@#1#" \
+    -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" \
+    $D/deploy/co.claude-debrief.daemon.plist.template > ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
+```
+
+The plist sets `AbandonProcessGroup`: without it launchd kills the
+background drafters and curators the moment the daemon script exits. Logs:
+`.system/daemon.log` (what the daemon queued) and `.system/hook.log` (drafters
+and curators).
+
 ## Viewer
 
 ```bash
