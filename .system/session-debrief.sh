@@ -248,6 +248,16 @@ if [ ! -f "${TRANSCRIPT:-}" ]; then
   exit 0
 fi
 
+# Optional scope (DEBRIEF_PROJECT_MATCH): a shell glob on the transcript's
+# ~/.claude/projects/<dir> name. A session from any other project is ignored.
+if [ -n "${DEBRIEF_PROJECT_MATCH:-}" ]; then
+  # shellcheck disable=SC2254
+  case "$(basename "$(dirname "$TRANSCRIPT")")" in
+    $DEBRIEF_PROJECT_MATCH) ;;
+    *) exit 0 ;;
+  esac
+fi
+
 # Stamp from the transcript's last write, not the clock: the same at a live
 # SessionEnd, and the right day when the daemon backfills an old session.
 ENDED_AT="$(date -r "$TRANSCRIPT" '+%Y-%m-%dT%H:%M:%S%z')"

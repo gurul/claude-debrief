@@ -62,6 +62,10 @@ bash "$SYSTEM_DIR/session-debrief.sh" </dev/null >/dev/null 2>&1
 handled=0
 for proj in "$HOME"/.claude/projects/*/; do
   case "$(basename "$proj")" in -private-tmp-*|-private-var-*|-tmp-*) continue ;; esac
+  if [ -n "${DEBRIEF_PROJECT_MATCH:-}" ]; then
+    # shellcheck disable=SC2254
+    case "$(basename "$proj")" in $DEBRIEF_PROJECT_MATCH) ;; *) continue ;; esac
+  fi
   while IFS= read -r t; do
     [ "$handled" -ge "$MAX_PER_RUN" ] && break 2
     sid="$(basename "$t" .jsonl)"

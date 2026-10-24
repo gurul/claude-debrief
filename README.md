@@ -265,10 +265,15 @@ global, so sessions from every project land in it:
 # plus "env": {"DEBRIEF_AUTO_CURATE": "1", "DEBRIEF_RAW_ARCHIVE": "1", "DEBRIEF_RAW_RETAIN_DAYS": "0"}
 D=~/claude-memory/debrief
 sed -e "s#@@DEBRIEF_DIR@@#$D#g" -e "s#@@HOME@@#$HOME#g" -e "s#@@AUTO_CURATE@@#1#" \
-    -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" \
+    -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" -e "s#@@PROJECT_MATCH@@##" \
     $D/deploy/co.claude-debrief.daemon.plist.template > ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 ```
+
+To capture only some projects, set `DEBRIEF_PROJECT_MATCH` to a shell glob on
+the `~/.claude/projects/<dir>` name, both in the hook command and in place of
+`@@PROJECT_MATCH@@`. For example, `-Users-me-Documents-personal*` keeps the
+sessions under `~/Documents/personal`. Empty means every project.
 
 The plist sets `AbandonProcessGroup`: without it launchd kills the
 background drafters and curators the moment the daemon script exits. Logs:
