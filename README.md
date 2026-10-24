@@ -229,6 +229,35 @@ cp debrief/.system/repos.example.json debrief/.system/repos.json  # then edit
 redacted, gzipped transcripts past Claude Code's ~30-day deletion — see
 [docs/verbatim-archive.md](docs/verbatim-archive.md) before turning it on.
 
+### Shared store: one memory directory for many repos
+
+The per-repo layout above is the default. The alternative is one store outside
+every repo, which the commands and the search script find through `$DEBRIEF_DIR`:
+
+```bash
+mkdir -p ~/claude-memory
+cp -R claude-debrief ~/claude-memory/debrief          # the store, not a checkout
+```
+
+Add to `~/.claude/settings.json` so every session and every subagent sees it:
+
+```jsonc
+{ "env": { "DEBRIEF_DIR": "/Users/<you>/claude-memory/debrief" } }
+```
+
+Resolution order in every `/debrief*` command: `debrief/` in the project root
+when `debrief/INDEX.md` exists there, otherwise `$DEBRIEF_DIR`, otherwise stop.
+A repo with its own store keeps it. The commands pass `--dir` explicitly, so
+the script never has to guess. `build-provenance.mjs` reads `$DEBRIEF_DIR`
+directly; pass its own `--dir` when a repo-local store should win.
+
+Capture into a shared store is the automatic mode below, with
+`DEBRIEF_PROJECT_MATCH` to limit which projects it drafts from.
+
+Subagents (`~/.claude/agents/*.md`) get recall by instruction, not by hook:
+a short "memory first" section that resolves `$D` the same way and runs
+`debrief-search.py --dir "$D" search` before any repo or web sweep.
+
 ## Automatic mode and the catch-up daemon (opt-in)
 
 For people who want an archive of everything rather than a curated memory,

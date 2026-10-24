@@ -7,14 +7,18 @@ argument-hint: "[query]"
 
 Arguments: `$ARGUMENTS`
 
-**Scope guard:** applies only to repos wired for debrief memory. If `debrief/INDEX.md` does not exist in the current project root, say so and stop.
+**Store resolution (check first):** the store is `debrief/` in the current project root when `debrief/INDEX.md` exists there. Otherwise it is the directory in `$DEBRIEF_DIR` (a shared store serving many repos; see the README's "Shared store"). If neither exists, say so ("no debrief store here") and stop. Never create a `debrief/` folder in a repo that has not opted in — memory is deliberate, not something a command sprays into every checkout. Every `debrief/…` path below means the resolved store. In shell, resolve it once:
+
+```bash
+D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
+```
 
 The margin stars: the handful of things a human said must be known **forever**. Cheapest and highest-signal recall in the system — read this before reaching for search, and read it at the start of any session on unfamiliar ground.
 
 ## No argument → the whole list
 
 ```bash
-python3 debrief/.system/debrief-search.py stars
+python3 "$D/.system/debrief-search.py" --dir "$D" stars
 ```
 
 Prints every `★` entry (and only the entries — the file's own explanation of how starring works is scaffolding and is filtered out). The list is deliberately short enough to read whole; if it is not, say so, because that means the starring bar has slipped.
@@ -24,7 +28,7 @@ If it reports no entries yet, the layer is unused — do not invent entries to f
 ## With a query → starred entries matching it
 
 ```bash
-python3 debrief/.system/debrief-search.py search "$ARGUMENTS" --starred -n 8
+python3 "$D/.system/debrief-search.py" --dir "$D" search "$ARGUMENTS" --starred -n 8
 ```
 
 Then `get <id>` for full text, exactly as in `/debrief-search`.

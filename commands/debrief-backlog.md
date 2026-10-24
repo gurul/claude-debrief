@@ -4,14 +4,18 @@ description: Show the uncurated debrief backlog — which dates need a /debrief 
 
 # /debrief-backlog — what memory is waiting to be curated
 
-**Scope guard:** applies only to repos wired for debrief memory. If `debrief/INDEX.md` does not exist in the current project root, say so ("this repo has no debrief system") and stop.
+**Store resolution (check first):** the store is `debrief/` in the current project root when `debrief/INDEX.md` exists there. Otherwise it is the directory in `$DEBRIEF_DIR` (a shared store serving many repos; see the README's "Shared store"). If neither exists, say so ("no debrief store here") and stop. Never create a `debrief/` folder in a repo that has not opted in — memory is deliberate, not something a command sprays into every checkout. Every `debrief/…` path below means the resolved store. In shell, resolve it once:
+
+```bash
+D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
+```
 
 The SessionEnd sweep counts the backlog into `.system/hook.log`, which no human opens. This command is the human-facing view of the same queue: landed drafts no `/debrief day` ever consumed (`unconsumed`), plus dead drafters (`failed`) split into still-recoverable and truly-terminal.
 
 1. **Run the report** (read-only — it never writes a daily, INDEX.md, or the queue):
 
    ```bash
-   python3 debrief/.system/debrief-backlog.py
+   python3 "$D/.system/debrief-backlog.py" --dir "$D"
    ```
 
    Output is a per-date list, oldest first, with the exact `/debrief day <date>` command for each stranded date, followed by any failed drafters labelled `recoverable via /debrief day <date>` (its transcript or raw archive survives) or `terminal` (both gone).
