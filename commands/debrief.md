@@ -7,7 +7,11 @@ argument-hint: "[day [YYYY-MM-DD]] | [highlight <the must-know>] | [dream]"
 
 Arguments: `$ARGUMENTS`
 
-**Scope guard (check first):** this is a personal, user-level command that applies only to repos wired for debrief memory. If `debrief/INDEX.md` does not exist in the current project root, say so ("this repo has no debrief system") and stop. Never create a `debrief/` folder in a repo that hasn't opted in — memory is deliberate, not something a command sprays into every checkout.
+**Store resolution (check first):** the store is `debrief/` in the current project root when `debrief/INDEX.md` exists there. Otherwise it is the directory in `$DEBRIEF_DIR` (a shared store serving many repos; see the README's "Shared store"). If neither exists, say so ("no debrief store here") and stop. Never create a `debrief/` folder in a repo that has not opted in — memory is deliberate, not something a command sprays into every checkout. Every `debrief/…` path below means the resolved store. In shell, resolve it once:
+
+```bash
+D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
+```
 
 The `debrief/` folder is this repo's curated project memory. Read `debrief/README.md` for the full system. Four modes, selected by the arguments above:
 

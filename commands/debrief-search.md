@@ -7,14 +7,18 @@ argument-hint: "<query>"
 
 Arguments: `$ARGUMENTS`
 
-**Scope guard:** applies only to repos wired for debrief memory. If `debrief/INDEX.md` does not exist in the current project root, say so and stop.
+**Store resolution (check first):** the store is `debrief/` in the current project root when `debrief/INDEX.md` exists there. Otherwise it is the directory in `$DEBRIEF_DIR` (a shared store serving many repos; see the README's "Shared store"). If neither exists, say so ("no debrief store here") and stop. Never create a `debrief/` folder in a repo that has not opted in — memory is deliberate, not something a command sprays into every checkout. Every `debrief/…` path below means the resolved store. In shell, resolve it once:
+
+```bash
+D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
+```
 
 Two-step workflow — filter before you fetch, so full sections enter context only when they've earned it:
 
 1. **Search.** Run:
 
    ```bash
-   python3 debrief/.system/debrief-search.py search "$ARGUMENTS" -n 8
+   python3 "$D/.system/debrief-search.py" --dir "$D" search "$ARGUMENTS" -n 8
    ```
 
    Output is one compact line per hit: `[id] date doc §section — snippet`. The index rebuilds itself when memory changed; a `(reindexed: …)` line on stderr is normal.
@@ -24,7 +28,7 @@ Two-step workflow — filter before you fetch, so full sections enter context on
 2. **Filter, then get.** Read the index lines and pick only the ids that plausibly answer the question — usually 1–3, not all of them:
 
    ```bash
-   python3 debrief/.system/debrief-search.py get 12 15
+   python3 "$D/.system/debrief-search.py" --dir "$D" get 12 15
    ```
 
    When a hit lands mid-document and needs surrounding context, add `-C 1` (N neighboring sections from the same doc, target marked `▶`) before reaching for a full-file Read — a fraction of the tokens on a large daily or INDEX.md.

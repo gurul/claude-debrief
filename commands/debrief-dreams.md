@@ -7,7 +7,11 @@ argument-hint: "[add <the observation>]"
 
 Arguments: `$ARGUMENTS`
 
-**Scope guard:** applies only to repos wired for debrief memory. If `debrief/INDEX.md` does not exist in the current project root, say so ("this repo has no debrief system") and stop.
+**Store resolution (check first):** the store is `debrief/` in the current project root when `debrief/INDEX.md` exists there. Otherwise it is the directory in `$DEBRIEF_DIR` (a shared store serving many repos; see the README's "Shared store"). If neither exists, say so ("no debrief store here") and stop. Never create a `debrief/` folder in a repo that has not opted in — memory is deliberate, not something a command sprays into every checkout. Every `debrief/…` path below means the resolved store. In shell, resolve it once:
+
+```bash
+D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
+```
 
 `debrief/OBSERVATIONS.md` is the dream layer: cross-session patterns a human chose to watch, each carrying receipts — `— seen in` lines citing the curated dailies that support it. Read `debrief/OBSERVATIONS.md` (the rules at the top especially) before acting. Two modes, selected by the arguments above:
 
