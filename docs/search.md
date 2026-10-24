@@ -40,6 +40,49 @@ python3 debrief/.system/debrief-search.py search "waf" --starred       # ★ ent
 `stars` prints entries only — the file's own explanation of how starring works is
 scaffolding and is filtered out, so the cheap-recall path stays cheap.
 
+## Semantic layer (EmbeddingGemma 2)
+
+Keyword search misses a note that uses another word for the same thing. When a
+local [Ollama](https://ollama.com) serves
+[EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2), `search`
+also ranks chunks by meaning and fuses the two lists with reciprocal-rank
+fusion (k = 60). The fusion uses ranks only, so the bm25 scale and the cosine
+scale never need calibration against each other.
+
+```bash
+brew install ollama && brew services start ollama
+ollama pull embeddinggemma-2
+python3 debrief/.system/debrief-search.py search "thermal throttling"
+# [212]~ 2026-10-13 2026-10-13-eve-daemon-….md §CPU embedder — …
+```
+
+- A `~` after the id marks a meaning-only hit: no query term is in the chunk.
+- The vectors cover exactly the chunks FTS indexes. The curation gate is
+  unchanged, and the selftest asserts that the two sets are equal.
+- Chunks use the model's retrieval prompts: `title: {section} ({doc}) | text: …`
+  for documents, `task: search result | query: …` for queries.
+- Vectors live in `.system/embed-cache.db` (gitignored), keyed by model,
+  dimension and prompt text. A reindex embeds only the sections that changed.
+- The semantic score is centered: `cos(query, chunk) − cos(empty query, chunk)`.
+  Raw cosines from this model sit in a narrow band (about 0.62 ± 0.03 on a
+  576-chunk store) and a few hub chunks score high against every query, so the
+  empty-query term is subtracted. A meaning-only hit needs a centered score of
+  at least 0.03. Measured: real queries put their best chunk at 0.03–0.11,
+  nonsense and single generic words at 0.02 or below, so those return no hits.
+- The ★ sort key still applies to every highlight that matches a keyword. A
+  highlight found by meaning alone ranks by fused score.
+- No Ollama, or no model: `search` prints `(semantic off: …; keyword only)` on
+  stderr and returns the plain bm25 ranking.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `--keyword` / `DEBRIEF_EMBED=off` | on | bm25 only |
+| `DEBRIEF_EMBED_URL` | `http://127.0.0.1:11434` | Ollama base URL |
+| `DEBRIEF_EMBED_MODEL` | `embeddinggemma-2` | any Ollama embedding model |
+| `DEBRIEF_EMBED_DIM` | `768` | Matryoshka truncation: 512, 256 or 128 |
+
+The script stays stdlib-only: it talks to Ollama over `urllib`.
+
 ## Selftest
 
 `debrief-search.py selftest` checks the invariants on a synthetic corpus —
@@ -47,7 +90,10 @@ pass/fail only, never a score. The central assertion is the gate itself:
 machine-draft content must be unsearchable. The starred invariants assert against
 the *hard* case (a highlight must outrank a competing doc-title match), because
 an earlier multiplier-based implementation passed a synthetic test where the term
-lived only in `HIGHLIGHTS.md`, then lost on the real corpus.
+lived only in `HIGHLIGHTS.md`, then lost on the real corpus. The semantic
+invariants run offline against a fake embedder: a meaning-only hit surfaces,
+the cache prevents re-embedding, the vector set equals the gated chunk set,
+and an unreachable embedder falls back to keyword search.
 
 ## The curation gate applies to retrieval too
 

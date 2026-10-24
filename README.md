@@ -16,7 +16,8 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
 - **Curation gate** — `/debrief` and `/debrief day` slash commands; machine
   drafts become durable memory only through a reviewed daily
 - **Retrieval** — `debrief-search.py`, sqlite FTS5 over *curated content only*,
-  search → get progressive disclosure
+  search → get progressive disclosure, plus optional meaning-based ranking with
+  EmbeddingGemma 2 through a local Ollama ([search](docs/search.md#semantic-layer-embeddinggemma-2))
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
 
@@ -374,7 +375,7 @@ debrief/
     backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
     archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
     build-provenance.mjs    # git → provenance.json
-    debrief-search.py       # FTS5 retrieval over curated memory (+ stars / --starred)
+    debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars / --starred)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
     repos.example.json      # copy to repos.json
     prompts/session-draft.md

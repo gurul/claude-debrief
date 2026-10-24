@@ -19,6 +19,8 @@ Two-step workflow — filter before you fetch, so full sections enter context on
 
    Output is one compact line per hit: `[id] date doc §section — snippet`. The index rebuilds itself when memory changed; a `(reindexed: …)` line on stderr is normal.
 
+   `[id]~` marks a meaning-only hit from EmbeddingGemma 2: none of the query words are in the chunk, so read it before you trust it. `(semantic off: …)` on stderr means the local Ollama is down and the results are keyword-only. That is not an error.
+
 2. **Filter, then get.** Read the index lines and pick only the ids that plausibly answer the question — usually 1–3, not all of them:
 
    ```bash
@@ -33,7 +35,7 @@ Two-step workflow — filter before you fetch, so full sections enter context on
 
 Daily debriefs, `INDEX.md`, `HIGHLIGHTS.md`, and session notes with `status: curated`. **Machine drafts are not indexed**, archived or not: their content becomes searchable only after `/debrief day` has verified or flagged its claims. If a search comes up empty but you suspect the answer is in an uncurated draft, the correct move is to tell the human that date needs a `/debrief day` pass — not to read the draft and present its claims as memory.
 
-Query syntax: terms are AND-ed; FTS5 syntax (`"exact phrase"`, `OR`, `NOT`) passes through when valid.
+Query syntax: for the keyword half, terms are AND-ed; FTS5 syntax (`"exact phrase"`, `OR`, `NOT`) passes through when valid.
 
 ## The ★ starred layer ranks first
 
