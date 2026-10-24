@@ -20,13 +20,31 @@ Debrief dir resolution: --dir flag, then $DEBRIEF_DIR, then walking up from
 cwd for a `debrief/INDEX.md` (or cwd being the debrief dir itself). The index
 lives at <debrief>/.system/search.db and rebuilds automatically when any
 source file changes — stdlib sqlite3 FTS5, no daemon, no dependencies.
+
+Semantic layer (optional): when a local Ollama serves EmbeddingGemma 2,
+`search` also ranks chunks by meaning and fuses that list with bm25, so
+"thermal" finds a note that only says "temperature". Vectors cover the same
+gated chunks as FTS — nothing new becomes searchable. They are cached by
+content hash in <debrief>/.system/embed-cache.db, so a reindex embeds only
+changed sections. Ollama down or absent: keyword search, one stderr line.
+
+    DEBRIEF_EMBED=off            keyword only (also: search --keyword)
+    DEBRIEF_EMBED_URL            default http://127.0.0.1:11434
+    DEBRIEF_EMBED_MODEL          default embeddinggemma-2
+    DEBRIEF_EMBED_DIM            768 (MRL truncation: 512, 256, 128)
 """
 
 import argparse
+import array
+import hashlib
+import json
+import math
 import os
 import re
 import sqlite3
 import sys
+import urllib.error
+import urllib.request
 
 # ---------------------------------------------------------------- location
 
@@ -178,6 +196,123 @@ def open_index(debrief):
     return db
 
 
+# ---------------------------------------------------------------- semantic
+
+EMBED_URL = os.environ.get("DEBRIEF_EMBED_URL", "http://127.0.0.1:11434").rstrip("/")
+EMBED_MODEL = os.environ.get("DEBRIEF_EMBED_MODEL", "embeddinggemma-2")
+EMBED_DIM = int(os.environ.get("DEBRIEF_EMBED_DIM", "768"))
+# Floor for a meaning-only hit, on the CENTERED score (see semantic_top).
+# Measured on a 576-chunk store: real queries put their best chunk 0.03-0.11
+# above baseline, nonsense and stop-word queries 0.02 or below.
+SEM_MIN = 0.03
+RRF_K = 60  # reciprocal-rank fusion constant (the standard one, untuned)
+
+
+class EmbedUnavailable(Exception):
+    pass
+
+
+def unit(v, dim):
+    """Matryoshka truncation: keep the leading dims, then re-normalize."""
+    v = v[:dim]
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+def ollama_embed(texts):
+    """Embed texts through Ollama's /api/embed. stdlib only."""
+    body = json.dumps({"model": EMBED_MODEL, "input": texts, "truncate": True})
+    req = urllib.request.Request(
+        EMBED_URL + "/api/embed", body.encode(), {"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        raise EmbedUnavailable(f"{EMBED_MODEL}: HTTP {e.code} {e.read()[:120]!r}")
+    except (urllib.error.URLError, OSError) as e:
+        raise EmbedUnavailable(f"no embedder at {EMBED_URL} ({e})")
+    vecs = out.get("embeddings")
+    if not vecs or len(vecs) != len(texts):
+        raise EmbedUnavailable(f"{EMBED_MODEL}: bad response")
+    return vecs
+
+
+# EmbeddingGemma 2's retrieval prompts (model card, "SearchQuery" task).
+def doc_prompt(doc, section, text):
+    return f"title: {section} ({doc}) | text: {text}"
+
+
+def query_prompt(q):
+    return f"task: search result | query: {q}"
+
+
+def chunk_vectors(debrief, db, embed, dim=None, batch=16):
+    """rowid -> unit vector for every indexed chunk. Embeds only cache misses.
+
+    The cache is a separate file because search.db is thrown away on every
+    corpus change. Keyed by model + dim + prompt text, so editing one section
+    re-embeds one section, and switching models never mixes vector spaces.
+    """
+    dim = dim or EMBED_DIM
+    cpath = os.path.join(debrief, ".system", "embed-cache.db")
+    cache = sqlite3.connect(cpath)
+    cache.execute("CREATE TABLE IF NOT EXISTS vec (key TEXT PRIMARY KEY, v BLOB)")
+    rows = db.execute("SELECT rowid, doc, section, text FROM chunks").fetchall()
+    keyed = []
+    for rowid, doc, section, text in rows:
+        prompt = doc_prompt(doc, section, text)
+        key = hashlib.sha256(f"{EMBED_MODEL}|{dim}|{prompt}".encode()).hexdigest()
+        keyed.append((rowid, key, prompt))
+    have = {}
+    keys = [k for _, k, _ in keyed]
+    for i in range(0, len(keys), 500):
+        part = keys[i : i + 500]
+        q = "SELECT key, v FROM vec WHERE key IN (%s)" % ",".join("?" * len(part))
+        have.update(cache.execute(q, part).fetchall())
+    missing = [(k, p) for _, k, p in keyed if k not in have]
+    for i in range(0, len(missing), batch):
+        part = missing[i : i + batch]
+        for (k, _), v in zip(part, embed([p for _, p in part])):
+            blob = array.array("f", unit(v, dim)).tobytes()
+            cache.execute("INSERT OR REPLACE INTO vec VALUES (?, ?)", (k, blob))
+            have[k] = blob
+        cache.commit()
+    if missing:
+        print(f"(embedded {len(missing)} new chunks with {EMBED_MODEL})", file=sys.stderr)
+    cache.close()
+    return {rowid: array.array("f", have[k]) for rowid, k, _ in keyed}
+
+
+def semantic_top(debrief, db, query, k, embed, kinds=None, dim=None):
+    """[(rowid, score)] best-first, above SEM_MIN.
+
+    score = cos(query, chunk) - cos(empty query, chunk). Raw cosines from
+    this model sit in a narrow band (about 0.62 +/- 0.03 on a real store)
+    and a few "hub" chunks score high against every query, nonsense
+    included. Subtracting each chunk's similarity to an empty query removes
+    the hub term, so a floor on what remains separates "about this" from
+    "about anything". One extra embed call per search.
+    """
+    dim = dim or EMBED_DIM
+    vecs = chunk_vectors(debrief, db, embed, dim)
+    null = unit(embed([query_prompt("")])[0], dim)
+    if kinds:
+        keep = {r for (r,) in db.execute(
+            "SELECT rowid FROM chunks WHERE kind IN (%s)" % ",".join("?" * len(kinds)),
+            list(kinds),
+        )}
+        vecs = {r: v for r, v in vecs.items() if r in keep}
+    qv = unit(embed([query_prompt(query)])[0], dim)
+    scored = [
+        (r, sum(a * b for a, b in zip(qv, v)) - sum(a * b for a, b in zip(null, v)))
+        for r, v in vecs.items()
+    ]
+    scored = [x for x in scored if x[1] >= SEM_MIN]
+    scored.sort(key=lambda x: -x[1])
+    return scored[:k]
+
+
 # ---------------------------------------------------------------- commands
 
 
@@ -186,50 +321,103 @@ def fts_query(q):
     return q, " AND ".join(f'"{t}"' for t in re.findall(r"[\w-]+", q))
 
 
-def cmd_search(db, args):
-    raw_q, safe_q = fts_query(args.query)
+KEYWORD_SQL = (
+    "SELECT rowid, doc, date, kind, section, "
+    "snippet(chunks, 4, '«', '»', '…', 14) "
+    "FROM chunks WHERE chunks MATCH ? {scope}"
+    # Curation-aware weights (bm25 is negative, lower = better; one
+    # hardcoded vector, no tunables). doc=2.0 / section=3.0: filename
+    # slugs and headings are the most distilled human signal. kind=0.0
+    # holds the UNINDEXED column's position. The CASE multiplier is a
+    # mild layer preference — dailies are the reviewed layer, INDEX the
+    # current-understanding layer — sized to break ties, never to
+    # override a strong body match in a curated session note.
+    #
+    # The starred layer leads as a SORT KEY, not via a tuned multiplier.
+    # A multiplier cannot deliver the promise: a mere 0.8 loses to any
+    # competing title match (doc=2.0/section=3.0), so "must-know surfaces
+    # first" would hold only when the term appeared nowhere else — the
+    # easy case. Ordering on kind first makes it unconditional and
+    # honest, and needs no constant to babysit. Within each group, and
+    # for everything below, relevance is unchanged.
+    "ORDER BY CASE kind WHEN 'highlight' THEN 0 ELSE 1 END, "
+    "bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) * "
+    "CASE kind WHEN 'daily' THEN 1.15 WHEN 'index' THEN 1.1 ELSE 1.0 END "
+    "LIMIT ?"
+)
+
+
+def keyword_rows(db, query, limit, starred=False):
+    raw_q, safe_q = fts_query(query)
     # --starred: highlights only. A deliberate escape hatch for "what must I
     # never forget about X", where even a strong body match elsewhere is noise.
-    scope = "AND kind='highlight' " if getattr(args, "starred", False) else ""
-    sql = (
-        "SELECT rowid, doc, date, kind, section, "
-        "snippet(chunks, 4, '«', '»', '…', 14) "
-        "FROM chunks WHERE chunks MATCH ? " + scope +
-        # Curation-aware weights (bm25 is negative, lower = better; one
-        # hardcoded vector, no tunables). doc=2.0 / section=3.0: filename
-        # slugs and headings are the most distilled human signal. kind=0.0
-        # holds the UNINDEXED column's position. The CASE multiplier is a
-        # mild layer preference — dailies are the reviewed layer, INDEX the
-        # current-understanding layer — sized to break ties, never to
-        # override a strong body match in a curated session note.
-        #
-        # The starred layer leads as a SORT KEY, not via a tuned multiplier.
-        # A multiplier cannot deliver the promise: a mere 0.8 loses to any
-        # competing title match (doc=2.0/section=3.0), so "must-know surfaces
-        # first" would hold only when the term appeared nowhere else — the
-        # easy case. Ordering on kind first makes it unconditional and
-        # honest, and needs no constant to babysit. Within each group, and
-        # for everything below, relevance is unchanged.
-        "ORDER BY CASE kind WHEN 'highlight' THEN 0 ELSE 1 END, "
-        "bm25(chunks, 2.0, 1.0, 0.0, 3.0, 1.0) * "
-        "CASE kind WHEN 'daily' THEN 1.15 WHEN 'index' THEN 1.1 ELSE 1.0 END "
-        "LIMIT ?"
-    )
+    sql = KEYWORD_SQL.format(scope="AND kind='highlight' " if starred else "")
     try:
-        rows = db.execute(sql, (raw_q, args.limit)).fetchall()
+        return db.execute(sql, (raw_q, limit)).fetchall()
     except sqlite3.OperationalError:
-        rows = db.execute(sql, (safe_q, args.limit)).fetchall()
-    if not rows:
-        hint = "no starred entries match" if getattr(args, "starred", False) else \
+        return db.execute(sql, (safe_q, limit)).fetchall()
+
+
+def ranked(debrief, db, query, limit, starred=False, embed=None, dim=None):
+    """[(row, how)] where how is 'kw', 'both' or 'sem'.
+
+    No embedder: exactly the keyword ranking. With one, reciprocal-rank
+    fusion of the bm25 list and the cosine list. Fusion uses ranks, not raw
+    scores, so the two scales never need calibrating against each other.
+    The ★ sort key still holds for every keyword-matched highlight. A
+    highlight found by meaning alone ranks by fused score, because "matches
+    at all" is not a meaningful test for a similarity that is never zero.
+    """
+    pool = max(limit * 4, 40)
+    kw = keyword_rows(db, query, pool if embed else limit, starred)
+    if not embed:
+        return [(r, "kw") for r in kw[:limit]]
+    kinds = ["highlight"] if starred else None
+    sem = semantic_top(debrief, db, query, pool, embed, kinds, dim)
+    score, how, rows = {}, {}, {r[0]: r for r in kw}
+    for i, r in enumerate(kw):
+        score[r[0]] = 1.0 / (RRF_K + i + 1)
+        how[r[0]] = "kw"
+    for i, (rowid, _) in enumerate(sem):
+        score[rowid] = score.get(rowid, 0.0) + 1.0 / (RRF_K + i + 1)
+        how[rowid] = "both" if rowid in how else "sem"
+    for rowid in score:
+        if rowid not in rows:
+            doc, date, kind, section, text = db.execute(
+                "SELECT doc, date, kind, section, text FROM chunks WHERE rowid=?",
+                (rowid,),
+            ).fetchone()
+            words = text.split()
+            snip = " ".join(words[:14]) + ("…" if len(words) > 14 else "")
+            rows[rowid] = (rowid, doc, date, kind, section, snip)
+    star_first = lambda r: 0 if rows[r][3] == "highlight" and how[r] != "sem" else 1
+    order = sorted(score, key=lambda r: (star_first(r), -score[r]))
+    return [(rows[r], how[r]) for r in order[:limit]]
+
+
+def cmd_search(debrief, db, args):
+    embed = None
+    if not args.keyword and os.environ.get("DEBRIEF_EMBED", "on").lower() not in ("0", "off", "no"):
+        embed = ollama_embed
+    try:
+        hits = ranked(debrief, db, args.query, args.limit, args.starred, embed)
+    except EmbedUnavailable as e:
+        print(f"(semantic off: {e}; keyword only)", file=sys.stderr)
+        hits = ranked(debrief, db, args.query, args.limit, args.starred, None)
+    if not hits:
+        hint = "no starred entries match" if args.starred else \
             "no hits — try fewer/other terms (index covers curated memory only)"
         print(hint)
         return
-    for rowid, doc, date, kind, section, snip in rows:
+    for (rowid, doc, date, kind, section, snip), how in hits:
         snip = " ".join(snip.split())
         label = date or kind
         star = "★ " if kind == "highlight" else ""
-        print(f"[{rowid}] {star}{label} {doc} §{section} — {snip}")
-    print(f"\n({len(rows)} hits; `get <id>` for full text)")
+        # "~": matched by meaning only — no query term is in the chunk.
+        mark = "~" if how == "sem" else ""
+        print(f"[{rowid}]{mark} {star}{label} {doc} §{section} — {snip}")
+    legend = "; ~ = meaning match, no keyword" if any(h == "sem" for _, h in hits) else ""
+    print(f"\n({len(hits)} hits; `get <id>` for full text{legend})")
 
 
 ENTRY = re.compile(r"^#{2,3}\s*★")
@@ -331,7 +519,8 @@ def cmd_selftest():
         )
         w(
             "sessions/2026-01-05/1200-curated.md",
-            "---\nstatus: curated\n---\n\n# Curated note\n\nWebhook secret rotated.\n",
+            "---\nstatus: curated\n---\n\n# Curated note\n\nWebhook secret rotated.\n\n"
+            "## Board\n\nBoard temperature stayed high.\n",
         )
         w(
             "sessions/2026-01-05/1300-draft.md",
@@ -473,6 +662,68 @@ def cmd_selftest():
         ).fetchone()
         check("starred: layer readable without a query", whole and whole[0] > 0)
 
+        # ------------------------------------------------ semantic layer
+        # A fake embedder: words hash into 64 buckets, after a synonym table
+        # folds "thermal"/"heat" into "temperature". Deterministic, offline,
+        # and enough to prove a meaning-only match can surface.
+        syn = {"thermal": "temperature", "heat": "temperature", "hot": "temperature"}
+        calls = []
+
+        def fake_embed(texts):
+            calls.append(len(texts))
+            out = []
+            for t in texts:
+                body = re.split(r"\| (?:text|query): ", t)[-1]
+                v = [0.0] * 64
+                for w in re.findall(r"[a-z]+", body.lower()):
+                    w = syn.get(w, w)
+                    v[int(hashlib.md5(w.encode()).hexdigest(), 16) % 64] += 1.0
+                out.append(v)
+            return out
+
+        u = unit([3.0, 4.0, 12.0], 2)
+        check("semantic: MRL truncation keeps dims and re-normalizes",
+              len(u) == 2 and abs(math.hypot(*u) - 1.0) < 1e-9, f"got {u}")
+
+        plain = ranked(td, db, "payments", 5)
+        check("semantic: no embedder means exact keyword ranking",
+              [r[0] for r, _ in plain] == [r[0] for r in keyword_rows(db, "payments", 5)])
+
+        hits = ranked(td, db, "thermal", 5, embed=fake_embed, dim=64)
+        check("semantic: meaning-only hit surfaces, marked sem",
+              any(h == "sem" and "temperature" in db.execute(
+                  "SELECT text FROM chunks WHERE rowid=?", (r[0],)).fetchone()[0]
+                  for r, h in hits),
+              f"got {[(r[1], r[4], h) for r, h in hits]}")
+
+        n = len(calls)
+        chunk_vectors(td, db, fake_embed, 64)
+        check("semantic: cache means a re-run embeds nothing",
+              len(calls) == n, f"{len(calls) - n} extra embed calls")
+
+        # The vector universe must be exactly the gated chunk set: the
+        # semantic layer may rank differently, never see more.
+        vec_ids = set(chunk_vectors(td, db, fake_embed, 64))
+        chunk_ids = {r for (r,) in db.execute("SELECT rowid FROM chunks")}
+        check("gate: semantic vectors cover exactly the indexed chunks",
+              vec_ids == chunk_ids and len(chunk_ids) > 0,
+              f"{len(vec_ids)} vecs vs {len(chunk_ids)} chunks")
+
+        star = ranked(td, db, "payments", 5, embed=fake_embed, dim=64)
+        check("starred: keyword-matched highlight still leads with fusion on",
+              star and star[0][0][3] == "highlight", f"got {star[:1]}")
+
+        global EMBED_URL
+        saved, EMBED_URL = EMBED_URL, "http://127.0.0.1:9"
+        try:
+            ollama_embed(["x"])
+            down = False
+        except EmbedUnavailable:
+            down = True
+        finally:
+            EMBED_URL = saved
+        check("fallback: unreachable embedder raises EmbedUnavailable", down)
+
     sys.exit(1 if failures else 0)
 
 
@@ -487,6 +738,10 @@ def main():
         "--starred", action="store_true",
         help="search the ★ starred layer only (HIGHLIGHTS.md)",
     )
+    s.add_argument(
+        "--keyword", action="store_true",
+        help="skip the EmbeddingGemma 2 semantic layer (bm25 only)",
+    )
     st = sub.add_parser("stars", help="print the ★ starred layer whole (no query)")
     st.add_argument("-n", "--limit", type=int, default=0, help="unused; kept for symmetry")
     g = sub.add_parser("get", help="full text for chosen ids")
@@ -499,8 +754,12 @@ def main():
     args = ap.parse_args()
     if args.cmd == "selftest":
         cmd_selftest()  # needs no real corpus; exits
-    db = open_index(find_debrief_dir(args.dir))
-    {"search": cmd_search, "get": cmd_get, "stars": cmd_stars}[args.cmd](db, args)
+    debrief = find_debrief_dir(args.dir)
+    db = open_index(debrief)
+    if args.cmd == "search":
+        cmd_search(debrief, db, args)
+    else:
+        {"get": cmd_get, "stars": cmd_stars}[args.cmd](db, args)
 
 
 if __name__ == "__main__":
