@@ -16,6 +16,8 @@ DAY="${1:?usage: curate-day.sh YYYY-MM-DD [wait-seconds]}"
 WAIT="${2:-600}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
+# Rotate past 1 MB: keep one previous file, so the log never grows without bound.
+[ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 1048576 ] && mv -f "$LOG" "$LOG.1"
 
 take_lock() {
   if mkdir "$LOCK" 2>/dev/null; then

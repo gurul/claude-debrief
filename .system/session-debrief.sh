@@ -15,6 +15,8 @@ QUEUE="$DEBRIEF_DIR/sessions/queue.jsonl"
 cd "$(dirname "$DEBRIEF_DIR")" || exit 0
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
+# Rotate past 1 MB: keep one previous file, so the log never grows without bound.
+[ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 1048576 ] && mv -f "$LOG" "$LOG.1"
 
 # Cold archive (DEBRIEF_RAW_ARCHIVE=1). Defined here and called BEFORE the
 # triviality gate: every session that produced a transcript is archived, even
@@ -55,6 +57,25 @@ archive_raw() {
       if REDACT_LOG=$(python3 "$REDACTOR" "$TRANSCRIPT" 2>&1 >"$RAW_DIR/.tmp.$$"); then
         if gzip -c "$RAW_DIR/.tmp.$$" >"$RAW_OUT" 2>>"$LOG"; then
           log "raw-archive: $(basename "$RAW_OUT") ($DATE) [${REDACT_LOG:-no matches}]"
+          # A resumed session archives again at each exit, and each copy holds the
+          # last one. Drop an older copy only when it is a byte prefix of this one,
+          # so the newest archive still holds every byte. Anything else is kept.
+          DEDUP=$(python3 - "$DEBRIEF_DIR/sessions/raw" "${SESSION_ID:0:8}" "$RAW_OUT" "$RAW_DIR/.tmp.$$" <<'PY' 2>&1
+import glob, gzip, os, sys
+raw, sid, keep, new = sys.argv[1:5]
+data = open(new, "rb").read()
+for f in glob.glob(os.path.join(raw, "*", "*-%s.jsonl.gz" % sid)):
+    if os.path.abspath(f) == os.path.abspath(keep):
+        continue
+    try:
+        if data.startswith(gzip.open(f).read()):
+            os.remove(f)
+            print("dropped " + os.path.basename(f))
+    except OSError:
+        pass
+PY
+) || true
+          [ -n "$DEDUP" ] && log "raw-archive: ${DEDUP//$'\n'/, } (prefix of $(basename "$RAW_OUT"))"
         else
           log "raw-archive: gzip failed for $SESSION_ID"
           rm -f "$RAW_OUT"

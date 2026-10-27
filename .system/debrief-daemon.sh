@@ -38,6 +38,8 @@ MAX_PER_RUN="${DEBRIEF_MAX_PER_RUN:-3}"
 CURATE_AFTER_MIN="${DEBRIEF_CURATE_AFTER_MIN:-20}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
+# Rotate past 1 MB: keep one previous file, so the log never grows without bound.
+[ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 1048576 ] && mv -f "$LOG" "$LOG.1"
 
 # One daemon at a time; a lock whose PID is gone is from before a reboot.
 if ! mkdir "$LOCK" 2>/dev/null; then

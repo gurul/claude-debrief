@@ -30,6 +30,7 @@ changed sections. Ollama down or absent: keyword search, one stderr line.
 
     DEBRIEF_EMBED=off            keyword only (also: search --keyword)
     DEBRIEF_EMBED_URL            default http://127.0.0.1:11434
+    DEBRIEF_EMBED_KEEP_ALIVE     default 30m (how long Ollama keeps the model loaded)
     DEBRIEF_EMBED_MODEL          default embeddinggemma-2
     DEBRIEF_EMBED_DIM            768 (MRL truncation: 512, 256, 128)
 """
@@ -199,6 +200,9 @@ def open_index(debrief):
 # ---------------------------------------------------------------- semantic
 
 EMBED_URL = os.environ.get("DEBRIEF_EMBED_URL", "http://127.0.0.1:11434").rstrip("/")
+# How long Ollama keeps the model loaded after a call. Its own default is 5m,
+# which makes most searches in a working session pay the cold load again.
+EMBED_KEEP_ALIVE = os.environ.get("DEBRIEF_EMBED_KEEP_ALIVE", "30m")
 EMBED_MODEL = os.environ.get("DEBRIEF_EMBED_MODEL", "embeddinggemma-2")
 EMBED_DIM = int(os.environ.get("DEBRIEF_EMBED_DIM", "768"))
 # Floor for a meaning-only hit, on the CENTERED score (see semantic_top).
@@ -221,7 +225,8 @@ def unit(v, dim):
 
 def ollama_embed(texts):
     """Embed texts through Ollama's /api/embed. stdlib only."""
-    body = json.dumps({"model": EMBED_MODEL, "input": texts, "truncate": True})
+    body = json.dumps({"model": EMBED_MODEL, "input": texts, "truncate": True,
+                       "keep_alive": EMBED_KEEP_ALIVE})
     req = urllib.request.Request(
         EMBED_URL + "/api/embed", body.encode(), {"Content-Type": "application/json"}
     )

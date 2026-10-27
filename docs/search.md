@@ -79,6 +79,7 @@ python3 debrief/.system/debrief-search.py search "thermal throttling"
 | `--keyword` / `DEBRIEF_EMBED=off` | on | bm25 only |
 | `DEBRIEF_EMBED_URL` | `http://127.0.0.1:11434` | Ollama base URL |
 | `DEBRIEF_EMBED_MODEL` | `embeddinggemma-2` | any Ollama embedding model |
+| `DEBRIEF_EMBED_KEEP_ALIVE` | `30m` | how long Ollama keeps the model loaded after a search |
 | `DEBRIEF_EMBED_DIM` | `768` | Matryoshka truncation: 512, 256 or 128 |
 
 The script stays stdlib-only: it talks to Ollama over `urllib`.

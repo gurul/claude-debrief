@@ -154,6 +154,36 @@ else
   bad "retention: 0 disables pruning" "pruned despite RETAIN=0"
 fi
 
+# ---- 5. a resumed session's older archive is dropped only when contained ----
+rm -rf "$TMP/sessions/raw"
+run_hook ffffffff 0
+FULL="$(find "$TMP/sessions/raw" -name '*-ffffffff.jsonl.gz' | head -1)"
+mkdir -p "$TMP/sessions/raw/2020-01-05"
+gzip -dc "$FULL" | head -n 5 | gzip -c > "$TMP/sessions/raw/2020-01-05/0000-ffffffff.jsonl.gz"
+echo '{"other":"history"}' | gzip -c > "$TMP/sessions/raw/2020-01-05/0001-ffffffff.jsonl.gz"
+gzip -dc "$FULL" | head -n 5 | gzip -c > "$TMP/sessions/raw/2020-01-05/0002-99999999.jsonl.gz"
+run_hook ffffffff 0
+if [ ! -f "$TMP/sessions/raw/2020-01-05/0000-ffffffff.jsonl.gz" ]; then
+  ok "dedupe: older prefix copy dropped"
+else
+  bad "dedupe: older prefix copy dropped" "prefix copy survived"
+fi
+if [ -f "$TMP/sessions/raw/2020-01-05/0001-ffffffff.jsonl.gz" ]; then
+  ok "dedupe: non-prefix copy kept"
+else
+  bad "dedupe: non-prefix copy kept" "a copy with other bytes was deleted"
+fi
+if [ -f "$TMP/sessions/raw/2020-01-05/0002-99999999.jsonl.gz" ]; then
+  ok "dedupe: other session untouched"
+else
+  bad "dedupe: other session untouched"
+fi
+if [ -n "$(find "$TMP/sessions/raw" -name '*-ffffffff.jsonl.gz' -newer "$TMP/sessions/raw/2020-01-05/0001-ffffffff.jsonl.gz")" ]; then
+  ok "dedupe: newest archive kept"
+else
+  bad "dedupe: newest archive kept"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "ALL PASS"

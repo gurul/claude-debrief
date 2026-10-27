@@ -218,7 +218,9 @@ Empty means every project.
 
 **4. Keep transcripts** (optional). Add `DEBRIEF_RAW_ARCHIVE=1` to the hook
 command to keep redacted, gzipped transcripts past Claude Code's ~30-day
-deletion; `DEBRIEF_RAW_RETAIN_DAYS=0` keeps them forever. Read
+deletion; `DEBRIEF_RAW_RETAIN_DAYS=0` keeps them forever. When a resumed
+session archives again, the hook drops an older copy only if the new copy
+contains every byte of it. Read
 [docs/verbatim-archive.md](docs/verbatim-archive.md) before turning it on.
 
 **5. Configure the graph** (optional):
@@ -262,6 +264,7 @@ The plist sets `AbandonProcessGroup`: without it launchd kills the
 background drafters and curators the moment the daemon script exits. Logs:
 `.system/daemon.log` (what the daemon queued) and `.system/hook.log` (drafters
 and curators).
+Each log rotates to `<name>.1` once it passes 1 MB, so one previous file is kept.
 
 ## Manual mode: a reviewed memory inside one repo
 
@@ -400,6 +403,8 @@ default model: the drafter and the curator. To cheapen them, add
 `--model haiku` (or `sonnet`) to the `claude -p` invocations in
 `.system/session-debrief.sh` and `.system/curate-day.sh`. To change what counts as
 "substantive", adjust the 30-line transcript guard there.
+The drafter reads only the first line of each glossary entry in `INDEX.md`,
+not the whole file, so its cost stays flat as the index grows.
 
 ## Layout
 

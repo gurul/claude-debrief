@@ -9,7 +9,7 @@ You are the debrief drafter for this project. A Claude Code session just ended; 
 
 ## Procedure
 
-1. Read `debrief/INDEX.md` (glossary section especially) so entity names stay consistent with the existing graph — reuse exact `[[entity]]` names when the session touched them.
+1. Collect the existing entity names so they stay consistent with the graph. Run Grep on `debrief/INDEX.md` with the pattern ``^- `\[\[`` and output mode `content`. Each match is the first line of one glossary entry. Reuse those exact `[[entity]]` names when the session touched them. Do not read the whole of `INDEX.md`: it is large, and the draft needs only the names. Read one glossary entry in full only when the session changed that entity.
 2. Read the transcript at TRANSCRIPT. It is JSONL with an internal, unstable format — read it as text and extract meaning; do not try to parse it programmatically. Read in chunks of at most 2000 lines. If it is very long, prioritize the FIRST chunk (user intent, task framing) and the LAST chunks (outcomes, final state), sampling the middle only as needed.
 3. Write the draft to OUTPUT FILE in this shape:
 
