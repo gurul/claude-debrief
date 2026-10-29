@@ -33,10 +33,28 @@ changed sections. Ollama down or absent: keyword search, one stderr line.
     DEBRIEF_EMBED_KEEP_ALIVE     default 30m (how long Ollama keeps the model loaded)
     DEBRIEF_EMBED_MODEL          default embeddinggemma-2
     DEBRIEF_EMBED_DIM            768 (MRL truncation: 512, 256, 128)
+
+Recency: memory goes stale, so a dated chunk's score decays with its age
+(half-life DEBRIEF_HALF_LIFE days, default 30, down to a floor so an old exact
+match still surfaces). INDEX.md and HIGHLIGHTS.md are undated and never decay:
+INDEX is pruned to what is true now, and a highlight is a must-know. Every hit
+prints its age. DEBRIEF_RECENCY=off (also: search --no-recency) ranks by
+relevance alone, for "what did we think back then" questions.
+
+Supersession: dailies are immutable, so a fact that a later day nullified is
+not deleted. It is invalidated in SUPERSEDED.md (written by the dream pass,
+or by hand), one line per dead chunk:
+
+    - 2026-09-04-old.md § Section heading → 2026-10-20-new.md — why
+
+Omit `§ Section` to invalidate the whole doc. A superseded chunk sinks to
+the bottom and prints `⊘ superseded by <doc>`, so the reader sees the old
+claim and where its replacement lives. History is kept, never served as now.
 """
 
 import argparse
 import array
+import datetime
 import hashlib
 import json
 import math
@@ -153,7 +171,7 @@ SCHEMA = """
 CREATE VIRTUAL TABLE chunks USING fts5(doc, date, kind UNINDEXED, section, text);
 CREATE TABLE meta (key TEXT PRIMARY KEY, val TEXT);
 """
-SCHEMA_V = "v3"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
+SCHEMA_V = "v4"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
 
 
 def corpus_fingerprint(debrief, docs):
@@ -210,6 +228,17 @@ EMBED_DIM = int(os.environ.get("DEBRIEF_EMBED_DIM", "768"))
 # above baseline, nonsense and stop-word queries 0.02 or below.
 SEM_MIN = 0.03
 RRF_K = 60  # reciprocal-rank fusion constant (the standard one, untuned)
+
+# Recency multiplier on the fused score: FLOOR + (1 - FLOOR) * 0.5^(age/HALF_LIFE).
+# A 30-day half-life roughly matches how fast project state turns over here.
+# The floor keeps a months-old note above unrelated noise: decay reorders
+# near-ties toward the newest, it never hides an old strong match.
+HALF_LIFE_DAYS = float(os.environ.get("DEBRIEF_HALF_LIFE", "30"))
+RECENCY_FLOOR = 0.3
+SUPERSEDED_FACTOR = 0.05  # below any live chunk's floor: invalidated sinks
+LEDGER_LINE = re.compile(
+    r"^\s*-\s*`?([^\s`§]+\.md)`?\s*(?:§\s*(.+?))?\s*(?:→|->)\s*`?([^\s`]+\.md)`?(?:\s+[—-]+\s+(.*))?$"
+)
 
 
 class EmbedUnavailable(Exception):
@@ -363,22 +392,60 @@ def keyword_rows(db, query, limit, starred=False):
         return db.execute(sql, (safe_q, limit)).fetchall()
 
 
-def ranked(debrief, db, query, limit, starred=False, embed=None, dim=None):
-    """[(row, how)] where how is 'kw', 'both' or 'sem'.
+def load_superseded(debrief):
+    """{(doc, section-lowercase or None): (newer_doc, why)} from SUPERSEDED.md."""
+    p = os.path.join(debrief, "SUPERSEDED.md")
+    out = {}
+    if not os.path.exists(p):
+        return out
+    for line in open(p, encoding="utf-8", errors="replace"):
+        m = LEDGER_LINE.match(line.rstrip())
+        if m:
+            old, sec, new, why = m.groups()
+            out[(old, sec.strip().lower() if sec else None)] = (new, (why or "").strip())
+    return out
 
-    No embedder: exactly the keyword ranking. With one, reciprocal-rank
-    fusion of the bm25 list and the cosine list. Fusion uses ranks, not raw
-    scores, so the two scales never need calibrating against each other.
+
+def superseded_by(ledger, doc, section):
+    return ledger.get((doc, (section or "").strip().lower())) or ledger.get((doc, None))
+
+
+def age_days(date, today):
+    try:
+        return max(0, (today - datetime.date.fromisoformat(date)).days)
+    except (TypeError, ValueError):
+        return None  # undated layer (INDEX, HIGHLIGHTS): current by contract
+
+
+def recency_factor(date, today):
+    age = age_days(date, today)
+    if age is None:
+        return 1.0
+    return RECENCY_FLOOR + (1 - RECENCY_FLOOR) * 0.5 ** (age / HALF_LIFE_DAYS)
+
+
+def ranked(debrief, db, query, limit, starred=False, embed=None, dim=None,
+           recency=True, today=None):
+    """[(row, how, dead)] where how is 'kw', 'both' or 'sem' and dead is the
+    (newer_doc, why) that superseded the chunk, or None.
+
+    No embedder and recency off: exactly the keyword ranking. Otherwise the
+    bm25 list (and, with an embedder, the cosine list) become reciprocal-rank
+    scores, fused, then multiplied by the chunk's recency factor. Fusion uses
+    ranks, not raw scores, so the scales never need calibrating. A chunk in
+    SUPERSEDED.md is multiplied down below every live one, recency or not.
     The ★ sort key still holds for every keyword-matched highlight. A
     highlight found by meaning alone ranks by fused score, because "matches
     at all" is not a meaningful test for a similarity that is never zero.
     """
+    today = today or datetime.date.today()
+    ledger = load_superseded(debrief)
     pool = max(limit * 4, 40)
-    kw = keyword_rows(db, query, pool if embed else limit, starred)
-    if not embed:
-        return [(r, "kw") for r in kw[:limit]]
+    kw = keyword_rows(db, query, pool if (embed or recency or ledger) else limit, starred)
+    if not embed and not recency and not ledger:
+        return [(r, "kw", None) for r in kw[:limit]]
     kinds = ["highlight"] if starred else None
-    sem = semantic_top(debrief, db, query, pool, embed, kinds, dim)
+    sem = semantic_top(debrief, db, query, pool, embed, kinds, dim) if embed else []
     score, how, rows = {}, {}, {r[0]: r for r in kw}
     for i, r in enumerate(kw):
         score[r[0]] = 1.0 / (RRF_K + i + 1)
@@ -395,34 +462,50 @@ def ranked(debrief, db, query, limit, starred=False, embed=None, dim=None):
             words = text.split()
             snip = " ".join(words[:14]) + ("…" if len(words) > 14 else "")
             rows[rowid] = (rowid, doc, date, kind, section, snip)
+    dead = {}
+    for rowid in score:
+        _, doc, date, kind, section, _ = rows[rowid]
+        dead[rowid] = superseded_by(ledger, doc, section)
+        if recency:
+            score[rowid] *= recency_factor(date, today)
+        if dead[rowid]:
+            score[rowid] *= SUPERSEDED_FACTOR
     star_first = lambda r: 0 if rows[r][3] == "highlight" and how[r] != "sem" else 1
     order = sorted(score, key=lambda r: (star_first(r), -score[r]))
-    return [(rows[r], how[r]) for r in order[:limit]]
+    return [(rows[r], how[r], dead[r]) for r in order[:limit]]
 
 
 def cmd_search(debrief, db, args):
     embed = None
     if not args.keyword and os.environ.get("DEBRIEF_EMBED", "on").lower() not in ("0", "off", "no"):
         embed = ollama_embed
+    recency = not args.no_recency and \
+        os.environ.get("DEBRIEF_RECENCY", "on").lower() not in ("0", "off", "no")
     try:
-        hits = ranked(debrief, db, args.query, args.limit, args.starred, embed)
+        hits = ranked(debrief, db, args.query, args.limit, args.starred, embed, recency=recency)
     except EmbedUnavailable as e:
         print(f"(semantic off: {e}; keyword only)", file=sys.stderr)
-        hits = ranked(debrief, db, args.query, args.limit, args.starred, None)
+        hits = ranked(debrief, db, args.query, args.limit, args.starred, None, recency=recency)
     if not hits:
         hint = "no starred entries match" if args.starred else \
             "no hits — try fewer/other terms (index covers curated memory only)"
         print(hint)
         return
-    for (rowid, doc, date, kind, section, snip), how in hits:
+    today = datetime.date.today()
+    for (rowid, doc, date, kind, section, snip), how, dead in hits:
         snip = " ".join(snip.split())
-        label = date or kind
+        age = age_days(date, today)
+        label = f"{date} ({age}d)" if age is not None else kind
         star = "★ " if kind == "highlight" else ""
         # "~": matched by meaning only — no query term is in the chunk.
         mark = "~" if how == "sem" else ""
-        print(f"[{rowid}]{mark} {star}{label} {doc} §{section} — {snip}")
-    legend = "; ~ = meaning match, no keyword" if any(h == "sem" for _, h in hits) else ""
-    print(f"\n({len(hits)} hits; `get <id>` for full text{legend})")
+        gone = f" ⊘ superseded by {dead[0]}" + (f" ({dead[1]})" if dead[1] else "") if dead else ""
+        print(f"[{rowid}]{mark} {star}{label} {doc} §{section}{gone} — {snip}")
+    legend = "; ~ = meaning match, no keyword" if any(h == "sem" for _, h, _ in hits) else ""
+    if any(d for _, _, d in hits):
+        legend += "; ⊘ = nullified by a later day, read the newer doc instead"
+    order = "newest-weighted" if recency else "relevance only"
+    print(f"\n({len(hits)} hits, {order}; `get <id>` for full text{legend})")
 
 
 ENTRY = re.compile(r"^#{2,3}\s*★")
@@ -690,16 +773,16 @@ def cmd_selftest():
         check("semantic: MRL truncation keeps dims and re-normalizes",
               len(u) == 2 and abs(math.hypot(*u) - 1.0) < 1e-9, f"got {u}")
 
-        plain = ranked(td, db, "payments", 5)
-        check("semantic: no embedder means exact keyword ranking",
-              [r[0] for r, _ in plain] == [r[0] for r in keyword_rows(db, "payments", 5)])
+        plain = ranked(td, db, "payments", 5, recency=False)
+        check("semantic: no embedder, no recency means exact keyword ranking",
+              [r[0] for r, _, _ in plain] == [r[0] for r in keyword_rows(db, "payments", 5)])
 
         hits = ranked(td, db, "thermal", 5, embed=fake_embed, dim=64)
         check("semantic: meaning-only hit surfaces, marked sem",
               any(h == "sem" and "temperature" in db.execute(
                   "SELECT text FROM chunks WHERE rowid=?", (r[0],)).fetchone()[0]
-                  for r, h in hits),
-              f"got {[(r[1], r[4], h) for r, h in hits]}")
+                  for r, h, _ in hits),
+              f"got {[(r[1], r[4], h) for r, h, _ in hits]}")
 
         n = len(calls)
         chunk_vectors(td, db, fake_embed, 64)
@@ -717,6 +800,44 @@ def cmd_selftest():
         star = ranked(td, db, "payments", 5, embed=fake_embed, dim=64)
         check("starred: keyword-matched highlight still leads with fusion on",
               star and star[0][0][3] == "highlight", f"got {star[:1]}")
+
+        # Recency: two dailies match the same term equally; the newer leads.
+        # Positive control: with recency off the older one (written first,
+        # same bm25) must be able to lead, or the check proves nothing.
+        w("2025-06-01-cache-old.md", "# Cache\n\n## Decision\n\nWe chose redis for the cache.\n")
+        w("2026-01-04-cache-new.md", "# Cache\n\n## Decision\n\nWe chose redis for the cache.\n")
+        db.close()
+        db = open_index(td)
+        today = datetime.date(2026, 1, 6)
+        new = ranked(td, db, "redis", 5, recency=True, today=today)
+        old = ranked(td, db, "redis", 5, recency=False, today=today)
+        check("recency: newer of two equal matches ranks first",
+              new and new[0][0][1] == "2026-01-04-cache-new.md", f"got {[r[1] for r, _, _ in new]}")
+        check("recency: control, relevance-only order differs or ties on the old doc",
+              old and {r[1] for r, _, _ in old[:2]} == {"2025-06-01-cache-old.md", "2026-01-04-cache-new.md"},
+              f"got {[r[1] for r, _, _ in old]}")
+        check("recency: undated layers never decay",
+              recency_factor(None, today) == 1.0 and recency_factor("", today) == 1.0)
+        check("recency: floor holds for very old chunks",
+              abs(recency_factor("2000-01-01", today) - RECENCY_FLOOR) < 1e-6)
+
+        # Supersession: a ledger line sinks the dead chunk below a weaker live
+        # one, even with recency off, and names its replacement.
+        w("SUPERSEDED.md", "# Superseded\n\n- 2026-01-04-cache-new.md § Decision → "
+          "2026-01-05-payments.md — moved to memcached\n")
+        dead = ranked(td, db, "redis", 5, recency=False, today=today)
+        check("supersede: ledgered chunk sinks below the live one",
+              dead and dead[0][0][1] == "2025-06-01-cache-old.md" and dead[-1][2]
+              and dead[-1][2][0] == "2026-01-05-payments.md",
+              f"got {[(r[1], d) for r, _, d in dead]}")
+        w("SUPERSEDED.md", "- 2025-06-01-cache-old.md → 2026-01-04-cache-new.md\n")
+        whole = ranked(td, db, "redis", 5, today=today)
+        check("supersede: a line with no § invalidates every chunk of the doc",
+              any(r[1] == "2025-06-01-cache-old.md" and d for r, _, d in whole),
+              f"got {[(r[1], d) for r, _, d in whole]}")
+        docs = {rel for rel, _, _ in collect(td)}
+        check("gate: SUPERSEDED.md is a ledger, never indexed prose",
+              "SUPERSEDED.md" not in docs)
 
         global EMBED_URL
         saved, EMBED_URL = EMBED_URL, "http://127.0.0.1:9"
@@ -746,6 +867,10 @@ def main():
     s.add_argument(
         "--keyword", action="store_true",
         help="skip the EmbeddingGemma 2 semantic layer (bm25 only)",
+    )
+    s.add_argument(
+        "--no-recency", action="store_true",
+        help="rank by relevance alone, no age decay (superseded chunks still sink)",
     )
     st = sub.add_parser("stars", help="print the ★ starred layer whole (no query)")
     st.add_argument("-n", "--limit", type=int, default=0, help="unused; kept for symmetry")

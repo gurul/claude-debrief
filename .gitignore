@@ -13,3 +13,7 @@ dist/
 .DS_Store
 .system/search.db
 .system/embed-cache.db
+.system/.dream.lock
+.system/.curate.lock
+.system/.daemon.lock
+dreams/

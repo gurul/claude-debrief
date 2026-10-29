@@ -93,6 +93,36 @@ except through their existing gates, and never writes a daily. Its inputs are
 immutable, so a pass is idempotent: proposals are disposable, and a rejected
 pass leaves no residue.
 
+## Running it automatically
+
+With `DEBRIEF_AUTO_DREAM=1` the daemon runs the pass itself (`.system/dream.sh`).
+The design takes four things from systems that already do this, and refuses
+one:
+
+- **Gate on time and on new evidence**, like Claude Code's Auto Dream (24 h
+  and 5 sessions since the last consolidation). Here it is ≥24 h and ≥3 new
+  dailies, because a daily is the unit evidence is counted in. Both are
+  settings: `DEBRIEF_DREAM_MIN_HOURS`, `DEBRIEF_DREAM_MIN_DAILIES`.
+- **One dreamer at a time.** A PID lock, taken over when its owner died with
+  the machine. The pass never starts while a curator is writing the dailies
+  it reads.
+- **Run in the background, off the hot path**, like Letta's sleep-time agents.
+  A session never waits for a dream.
+- **Invalidate, never delete**, like Graphiti's bi-temporal edges. A claim a
+  later day nullified gets a line in `SUPERSEDED.md` that names its
+  replacement. Search sinks it and points at the newer doc. The old daily stays
+  as written, so "what did we believe in September" still has an answer.
+- **Refused: last-write-wins.** Auto Dream and Mem0 delete the contradicted
+  fact. That loses the case where two dailies describe two contexts rather
+  than a change of mind. A later daily wins here only when it states the
+  change ("replaced", "reverted", "no longer"). Otherwise the entry goes
+  `contested` with both receipts.
+
+Review is waived, as with the automatic curator. In its place, every change is
+listed in `dreams/<date>.md` with its receipt. That file is the review surface,
+read after the fact. Leave the variable unset to keep the human gate:
+`/debrief dream` then proposes and a person approves item by item.
+
 ## Why search doesn't index it
 
 Same argument as the todo layer, sharpened: this is a living surface meant to

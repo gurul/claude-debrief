@@ -14,9 +14,13 @@
 #   4. lost curators  drafts that landed but were never folded into a day
 #                     (only with DEBRIEF_AUTO_CURATE=1; otherwise they wait
 #                     for a human /debrief day, as designed)
+#   5. dream          the cross-session pass, once its gates hold (24 h and
+#                     3 new dailies since the last one; see dream.sh). Only
+#                     with DEBRIEF_AUTO_DREAM=1; otherwise /debrief dream.
 #
 # Settings come from the environment (the launchd job sets them):
 #   DEBRIEF_AUTO_CURATE=1     fold drafts into dailies with no review step
+#   DEBRIEF_AUTO_DREAM=1      run the dream pass with no review step
 #   DEBRIEF_RAW_ARCHIVE=1     keep a redacted verbatim copy of each transcript
 #   DEBRIEF_RAW_RETAIN_DAYS   0 = keep forever (default 180)
 #   DEBRIEF_IDLE_MIN (30), DEBRIEF_MAX_PER_RUN (3), DEBRIEF_CURATE_AFTER_MIN (20)
@@ -73,7 +77,7 @@ for proj in "$HOME"/.claude/projects/*/; do
     sid="$(basename "$t" .jsonl)"
     grep -qx "$sid" "$SEEN" 2>/dev/null && continue
     if { [ -f "$QUEUE" ] && grep -q "\"session_id\": \"$sid\"" "$QUEUE"; } \
-       || head -c 20000 "$t" | grep -qE 'You are the (debrief drafter|automatic day curator)' \
+       || head -c 20000 "$t" | grep -qE 'You are the (debrief drafter|automatic day curator|automatic dream pass)' \
        || [ "$(wc -l <"$t" | tr -d ' ')" -lt 30 ]; then
       echo "$sid" >>"$SEEN"
       continue
@@ -89,13 +93,22 @@ done
 # 4. Lost curators: a day folder still holding drafts older than
 #    CURATE_AFTER_MIN means its curator never ran or died. One day per run,
 #    oldest first, in the background (curate-day.sh takes the lock).
-[ "${DEBRIEF_AUTO_CURATE:-}" = 1 ] || exit 0
-for day_dir in "$DEBRIEF_DIR"/sessions/20??-??-??/; do
-  [ -d "$day_dir" ] || continue
-  if [ -n "$(find "$day_dir" -maxdepth 1 -name '*.md' -mmin "+$CURATE_AFTER_MIN" | head -1)" ]; then
-    day="$(basename "$day_dir")"
-    log "catch-up: curating $day"
-    nohup bash "$SYSTEM_DIR/curate-day.sh" "$day" 0 >/dev/null 2>&1 &
-    break
-  fi
-done
+curating=0
+if [ "${DEBRIEF_AUTO_CURATE:-}" = 1 ]; then
+  for day_dir in "$DEBRIEF_DIR"/sessions/20??-??-??/; do
+    [ -d "$day_dir" ] || continue
+    if [ -n "$(find "$day_dir" -maxdepth 1 -name '*.md' -mmin "+$CURATE_AFTER_MIN" | head -1)" ]; then
+      day="$(basename "$day_dir")"
+      log "catch-up: curating $day"
+      nohup bash "$SYSTEM_DIR/curate-day.sh" "$day" 0 >/dev/null 2>&1 &
+      curating=1
+      break
+    fi
+  done
+fi
+
+# 5. Dream. Never while a curator runs: the dream reads the dailies the
+#    curator is still writing. dream.sh checks its own gates and lock.
+[ "${DEBRIEF_AUTO_DREAM:-}" = 1 ] || exit 0
+[ "$curating" = 0 ] && [ ! -d "$SYSTEM_DIR/.curate.lock" ] || exit 0
+nohup bash "$SYSTEM_DIR/dream.sh" >/dev/null 2>&1 &

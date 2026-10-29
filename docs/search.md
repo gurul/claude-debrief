@@ -40,6 +40,39 @@ python3 debrief/.system/debrief-search.py search "waf" --starred       # ★ ent
 `stars` prints entries only — the file's own explanation of how starring works is
 scaffolding and is filtered out, so the cheap-recall path stays cheap.
 
+## Recency and supersession
+
+Memory goes stale. A note that says "we use X" is wrong the week after X is
+replaced, and plain relevance ranking serves it with full confidence.
+
+**Recency.** After fusion, each dated chunk's score is multiplied by
+`0.3 + 0.7 × 0.5^(age / 30 days)`. Two equal matches now rank newest first,
+and a months-old note keeps 30% of its score, so an old exact match still
+beats unrelated noise. `INDEX.md` and `HIGHLIGHTS.md` are undated and never
+decay: INDEX is pruned to what is true now, and a highlight is a must-know.
+Every hit prints its age, `2026-09-25 (34d)`. The shape follows the
+Generative Agents retrieval score (relevance × exponential recency decay).
+
+**Supersession.** Decay only reorders. A claim that a later day explicitly
+nullified must not be served as current at all. Dailies are immutable, so
+such a claim is invalidated in `SUPERSEDED.md` instead of deleted, the way
+Graphiti invalidates a superseded graph edge and keeps its history:
+
+```
+- 2026-09-04-old.md § Section heading → 2026-10-20-new.md — moved to memcached
+```
+
+A ledgered chunk's score is multiplied by 0.05, which puts it below every live
+chunk with or without recency, and the hit prints
+`⊘ superseded by 2026-10-20-new.md (moved to memcached)`. Omit `§ …` to
+invalidate a whole doc. The dream pass writes the ledger; a person can too.
+The ledger is never indexed.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `--no-recency` / `DEBRIEF_RECENCY=off` | on | relevance only ("what did we think back then"); superseded chunks still sink |
+| `DEBRIEF_HALF_LIFE` | `30` | days for a dated chunk to lose half its decayable score |
+
 ## Semantic layer (EmbeddingGemma 2)
 
 Keyword search misses a note that uses another word for the same thing. When a

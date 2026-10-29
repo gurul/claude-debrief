@@ -22,7 +22,9 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
   with a review step, is the manual path
 - **Retrieval** — `debrief-search.py`, sqlite FTS5 over *curated content only*,
   search → get progressive disclosure, plus optional meaning-based ranking with
-  EmbeddingGemma 2 through a local Ollama ([search](docs/search.md#semantic-layer-embeddinggemma-2))
+  EmbeddingGemma 2 through a local Ollama ([search](docs/search.md#semantic-layer-embeddinggemma-2)).
+  Newer memory ranks higher, and claims a later day nullified sink with a
+  `⊘ superseded by` pointer ([recency](docs/search.md#recency-and-supersession))
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
 
@@ -116,13 +118,17 @@ once in January is invisible in March. `OBSERVATIONS.md` holds patterns under
 watch, each entry carrying **receipts** (one `— seen in` line per sighting,
 citing a curated daily with a verbatim quote) and a status (`watching` /
 `contested` / promoted / refuted). Evidence is counted in distinct dailies; at
-≥2, `/debrief dream` — the manual cross-session pass — may propose promotion
-to an INDEX principle, receipts attached. Disagreements between dailies are
-preserved as `contested` pairs, never resolved last-write-wins. The automatic
-curator records sightings and new entries after each session. Promotion to an
-INDEX principle stays with the manual `/debrief dream` pass, where a person
-approves item by item; `/debrief-dreams add` is the human-authored path. Rationale:
-[docs/dream-layer.md](docs/dream-layer.md).
+≥2, the dream pass may promote it to an INDEX principle, receipts attached.
+Disagreements between dailies are preserved as `contested` pairs, never
+resolved last-write-wins. The dream pass also writes `SUPERSEDED.md`: when a
+later daily explicitly overrides an older one, the old section is invalidated
+there (never deleted), and search stops serving it as current. The automatic
+curator records sightings and new entries after each session. With
+`DEBRIEF_AUTO_DREAM=1` the daemon runs the dream pass about once a day (≥24 h
+and ≥3 new dailies since the last run), review waived, every change listed in
+`dreams/<date>.md`. Without it, `/debrief dream` proposes and a person
+approves item by item; `/debrief-dreams add` is the human-authored path.
+Rationale: [docs/dream-layer.md](docs/dream-layer.md).
 
 ## Lifecycle
 
@@ -139,15 +145,17 @@ session ends ──SessionEnd hook──▶ .system/session-debrief.sh
 launchd daemon (login, wake, every 15 min) ──▶ .system/debrief-daemon.sh
                                                 ├─ clears orphaned locks, re-runs dead drafters
                                                 ├─ queues idle transcripts the hook never saw
-                                                └─ curates any day whose drafts nobody consumed
+                                                ├─ curates any day whose drafts nobody consumed
+                                                └─ .system/dream.sh  (DEBRIEF_AUTO_DREAM=1; ≥24 h + ≥3 new dailies)
+                                                     └─▶ OBSERVATIONS.md, SUPERSEDED.md, INDEX.md, dreams/<date>.md
 
 by hand, any time, all optional:
 /debrief                     (in-session)    ─▶ sessions/<date>/<HHMM>-<slug>.md   status: curated
 /debrief day                 (manual mode)   ─▶ the same day pass, with a review step
 /debrief highlight <thing>                   ─▶ appends ★ entry to HIGHLIGHTS.md   (never pruned)
 /debrief-todos [add|done]                    ─▶ shows / updates TODO.md
-/debrief dream               (cross-session) ─▶ proposes sightings, contested pairs, ≥2-daily
-                                                promotions ─▶ human approves ─▶ OBSERVATIONS.md
+/debrief dream               (cross-session) ─▶ proposes sightings, contested pairs, supersessions,
+                                                ≥2-daily promotions ─▶ human approves ─▶ OBSERVATIONS.md
 /debrief-dreams [add]                        ─▶ shows / appends to OBSERVATIONS.md
 ```
 
@@ -197,7 +205,8 @@ session and every subagent sees them:
 ```
 
 `DEBRIEF_AUTO_CURATE=1` is what makes curation automatic; the scripts leave it
-off unless you set it. `async: true` matters, because a drafter should never
+off unless you set it. `DEBRIEF_AUTO_DREAM=1` in the daemon does the same for
+the dream pass. `async: true` matters, because a drafter should never
 delay session exit.
 
 **2. Install the daemon** (macOS):
@@ -205,7 +214,7 @@ delay session exit.
 ```bash
 D=~/claude-memory/debrief
 sed -e "s#@@DEBRIEF_DIR@@#$D#g" -e "s#@@HOME@@#$HOME#g" -e "s#@@AUTO_CURATE@@#1#" \
-    -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" -e "s#@@PROJECT_MATCH@@##" \
+    -e "s#@@AUTO_DREAM@@#1#" -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" -e "s#@@PROJECT_MATCH@@##" \
     $D/deploy/co.claude-debrief.daemon.plist.template > ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 ```
@@ -255,9 +264,16 @@ every 15 min, and repairs whatever was left unfinished:
    never queued, to the `SessionEnd` pipeline. This is also how a backlog of
    past sessions is worked off, 3 per run, each filed under the day it
    happened (session stamps come from the transcript, not the clock);
-4. curates any day whose drafts no curator consumed.
+4. curates any day whose drafts no curator consumed;
+5. with `DEBRIEF_AUTO_DREAM=1`, runs the dream pass (`.system/dream.sh`) when
+   the last one is at least 24 h old and at least 3 new dailies have landed
+   (`DEBRIEF_DREAM_MIN_HOURS`, `DEBRIEF_DREAM_MIN_DAILIES`). It never starts
+   while a curator is writing. It applies receipts, promotions, supersessions
+   and INDEX fixes directly, invalidates rather than deletes, and lists every
+   change in `dreams/<date>.md` for review after the fact
+   (`.system/prompts/auto-dream.md`). `dream.sh --force` runs it now.
 
-The daemon's own headless sessions (drafter, curator) are recognised by their
+The daemon's own headless sessions (drafter, curator, dream) are recognised by their
 opening prompt and skipped.
 
 The plist sets `AbandonProcessGroup`: without it launchd kills the
@@ -268,15 +284,15 @@ Each log rotates to `<name>.1` once it passes 1 MB, so one previous file is kept
 
 ## Manual mode: a reviewed memory inside one repo
 
-If you would rather approve every entry, leave `DEBRIEF_AUTO_CURATE` unset and
-skip the daemon. Drafts then wait in `sessions/` until you run `/debrief day`,
+If you would rather approve every entry, leave `DEBRIEF_AUTO_CURATE` and
+`DEBRIEF_AUTO_DREAM` unset and skip the daemon. Drafts then wait in `sessions/` until you run `/debrief day`,
 which reviews each change with you before it writes.
 
 Manual mode usually lives inside a project, as `debrief/`:
 
 ```bash
 mkdir -p /path/to/your-repo/debrief
-cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,OBSERVATIONS.md,README.md} /path/to/your-repo/debrief/
+cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,OBSERVATIONS.md,SUPERSEDED.md,README.md} /path/to/your-repo/debrief/
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -414,6 +430,8 @@ debrief/
   HIGHLIGHTS.md             # starred layer — ★ must-know-forever (append-only, never pruned)
   TODO.md                   # todo layer — open threads tracked until resolved
   OBSERVATIONS.md           # dream layer — patterns under watch, with receipts
+  SUPERSEDED.md             # ledger of daily sections a later day nullified (search sinks them)
+  dreams/<date>.md          # audit trail of each automatic dream pass
   README.md                 # this file
   YYYY-MM-DD-<slug>.md      # daily debriefs (episodic)
   provenance.json           # generated; example fixture ships with the repo
@@ -425,17 +443,20 @@ debrief/
   .system/
     session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
     curate-day.sh           # the automatic curator (headless /debrief day, no review)
+    dream.sh                # the automatic dream pass (gated: 24 h + 3 new dailies)
     debrief-daemon.sh       # the launchd catch-up daemon
     backlog-nudge.sh        # the SessionStart hook (surfaces the backlog, once/day)
     debrief-backlog.py      # read-only backlog report (full + --nudge); source of truth
     backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
     archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
+    dream-selftest.sh       # integration selftest: dream gates + lock (stub claude)
     build-provenance.mjs    # git → provenance.json
     debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars / --starred)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
     repos.example.json      # copy to repos.json
     prompts/session-draft.md
     prompts/auto-day.md     # the curator's standing overrides
+    prompts/auto-dream.md   # the dream pass's standing overrides
   viewer/                   # Vite + React memory viewer
 deploy/
   co.claude-debrief.daemon.plist.template   # launchd agent for the daemon

@@ -15,6 +15,8 @@
     <string>@@HOME@@</string>
     <key>DEBRIEF_AUTO_CURATE</key>
     <string>@@AUTO_CURATE@@</string>
+    <key>DEBRIEF_AUTO_DREAM</key>
+    <string>@@AUTO_DREAM@@</string>
     <key>DEBRIEF_RAW_ARCHIVE</key>
     <string>@@RAW_ARCHIVE@@</string>
     <key>DEBRIEF_RAW_RETAIN_DAYS</key>
@@ -28,7 +30,7 @@
   <true/>
   <key>StartInterval</key>
   <integer>900</integer>
-  <!-- The daemon starts drafters and curators in the background and exits;
+  <!-- The daemon starts drafters, curators and the dream in the background and exits;
        without this, launchd kills them the moment the script returns. -->
   <key>AbandonProcessGroup</key>
   <true/>
