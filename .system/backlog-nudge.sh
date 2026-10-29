@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook for the debrief system (github.com/Era-Laboratories/claude-debrief).
+# SessionStart hook for the debrief system (github.com/gurul/claude-debrief).
 # Receives Claude Code SessionStart JSON on stdin and, on a genuine startup with
 # a non-empty backlog, injects a one-line nudge into the session's context so
 # the human learns the queue needs a `/debrief day` pass — the surfacing end of
