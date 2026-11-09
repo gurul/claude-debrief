@@ -261,13 +261,15 @@ def _project(text):
     if not m and text.strip("`").startswith(("/", "~")):
         text = text.strip("`")
     if m or text.startswith(("/", "~")):
-        path = (m.group(1) if m else text).strip().strip("`").rstrip("/")
+        path = (m.group(1) if m else text).strip().strip("`")
+        path = re.split(r"[`\s]", path, maxsplit=1)[0].rstrip("/")       # "/x/buddy` (on `main`)" -> "/x/buddy"
         return os.path.basename(path) or path
     for part in re.split(r",\s*", text):
-        part = part.strip().strip("`")
+        part = re.split(r"[`(]", part.strip().lstrip("`"), maxsplit=1)[0].strip()
         if part.startswith(("/", "~")):
             return os.path.basename(part.rstrip("/")) or part
-        if part and not re.match(r"(ended|session|started|\d{1,2}:\d\d)\b|[0-9a-f]{8}$", part):
+        if part and len(part.split()) <= 3 and "→" not in part and not re.match(
+                r"(ended|session|started|\d{1,2}:\d\d|\d{4}|[A-Z][a-z]{2} \d)\b|[0-9a-f]{8}$|\d+$", part):
             return part
     return ""
 
@@ -960,7 +962,10 @@ def cmd_status(debrief, db, args):
     pat = re.compile(r"\b" + re.escape(key) + r"\b", re.I)
     also = []
     for other, summary in db.execute("SELECT name, summary FROM entities WHERE name != ?", (name,)):
-        hits = [x for x in re.split(r"(?<=[.;])\s+", summary) if pat.search(x)]
+        # Sentences, with the citation links ("([2026-11-07 addendum](file.md))") taken out first, so a
+        # date's dots and a file name never split one.
+        plain = re.sub(r"\s*\(\[[^\]]*\]\([^)]*\)\)", "", summary)
+        hits = [x for x in re.split(r"(?<=[.;])\s+(?=[A-Z`*(])", plain) if pat.search(x)]
         if hits:
             dates = re.findall(r"\d{4}-\d{2}-\d{2}", summary)
             also.append((max(dates) if dates else "", other, " ".join(hits)[:500]))

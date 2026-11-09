@@ -233,3 +233,14 @@ of "no record": 20 of the 35 answerable questions came back all `~`, and 14 of t
 held the answer. Read a `~` hit before trusting or dismissing it. And none of the
 models returned nothing for the 5 questions about things that never happened, so the
 reader, not the search, has to say "no record".
+
+### Can a reader tell "no record" from an answer? (2026-11-09)
+
+The top meaning score does not separate them: on the 40-question set, questions about
+things that never happened scored 0.04-0.14 and answerable ones 0.06-0.18, so no
+threshold works. What does work is the reader. On a fresh blind set of 30 (15
+answerable, 15 never recorded, five of those leading yes/no questions), a production
+chat model given this store's tools through eve answered 15/15 and said "no record"
+on 15/15 (one judged wrong was a correct grounded "no, it is on Vercel"), searching
+again on its own when the first hits did not answer. A stricter reading instruction
+scored the same and was not adopted. Keep "no record" a reader's call, not a score.
