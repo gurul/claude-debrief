@@ -203,3 +203,33 @@ The fingerprint includes the script itself, so a new version of the script
 rebuilds the tables. The rebuild writes a new file and swaps it in, so a reader at
 the same moment keeps the old index instead of reading a half-built one.
 
+
+## Which embedding model (blind eval, 2026-11-09)
+
+EmbeddingGemma 2 stays the default. A sealed set of 40 past-work questions (35 with
+an answer in the notes, 5 about things that never happened) was written by an agent
+that read the notes and never ran a search, with the chunks that answer each one as
+gold. Each model was prompted in its own format (`PROMPTS`), embedded the same
+802-chunk store, and was scored mechanically: is a gold chunk in the top 6. Each
+model's meaning floor was set on nonsense queries only, never on the set, so nothing
+was tuned on it. The questions are the owner's and are not in this repository.
+
+| Model | Found in top 6 | Top 1 | MRR | Dated notes only | Misheard names | Embed all | Search |
+|---|---|---|---|---|---|---|---|
+| keyword only | 8/35 | 6 | 0.20 | 2/34 | 0/7 | — | 0 ms |
+| **EmbeddingGemma 2, floor 0.03** | **27/35** | 12 | **0.50** | **26/34** | **5/7** | **31 s** | 70 ms |
+| EmbeddingGemma 2, calibrated floor | 25/35 | 10 | 0.45 | 23/34 | 5/7 | 31 s | 72 ms |
+| Qwen3-Embedding 0.6B | 26/35 | 13 | 0.50 | 25/34 | 3/7 | 106 s | 79 ms |
+| Qwen3-Embedding 4B | 24/35 | 11 | 0.46 | 24/34 | 2/7 | 174 s | 149 ms |
+| BGE-M3 | 21/35 | 10 | 0.41 | 21/34 | 2/7 | 48 s | 76 ms |
+
+Single runs on one Mac. No candidate beat the default by more than noise, every one
+was weaker on misheard names, and the larger ones embed several times slower (the 4B
+model timed out at 120 s on one batch of long chunks). The calibrated floor (0.013)
+did worse than the hand-set 0.03, so 0.03 stays.
+
+The same run showed that a result made only of meaning hits (`~`) is not a sign
+of "no record": 20 of the 35 answerable questions came back all `~`, and 14 of those
+held the answer. Read a `~` hit before trusting or dismissing it. And none of the
+models returned nothing for the 5 questions about things that never happened, so the
+reader, not the search, has to say "no record".
