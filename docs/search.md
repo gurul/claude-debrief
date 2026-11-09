@@ -163,3 +163,43 @@ not. The selftest plants markers in both files and asserts they never match.
 Query terms are AND-ed; valid FTS5 syntax (`"exact phrase"`, `OR`, `NOT`)
 passes through. `--dir` / `$DEBRIEF_DIR` override discovery, same as the
 provenance builder.
+
+## Structure tables
+
+The search ranks by words, meaning and recency, never by date. On 2026-11-09 a
+personal assistant asked it "what was I working on yesterday" and got two older
+days; even a query holding the date did not reliably surface that day. "When did I
+last work on X", "where does X stand" and "what is left to do" failed the same way.
+
+The notes already carry the structure those questions need, so every rebuild of
+`search.db` also fills these tables from the same Markdown (the Markdown stays the
+source of truth; nothing is written back):
+
+| Table | From | Holds |
+|---|---|---|
+| `days` | each root daily, plus its `INDEX.md` row | date, file, title, summary |
+| `sessions` | each daily's Sessions table and `Late-day addendum` headings | session id, day, project (from the cwd or the heading), end time, shape |
+| `entities` | `INDEX.md`'s Glossary, one `[[name]]` entry each | name, group, entry text |
+| `mentions` | `[[name]]` links in each daily section | name, day, section, count |
+| `todos` | `TODO.md` Open and Closed | text, linked names, opened date, status |
+| `replaced` | `SUPERSEDED.md` | old doc and section, newer doc, why |
+
+The commands that read them:
+
+- `day <when> [--until <when>]`: one day answers its summary, its sessions, an
+  outline of its parts, then the note; a span answers each day's summary and names
+  the days with no note. `<when>` is `YYYY-MM-DD`, `today`, `yesterday`, `day
+  before yesterday`, a weekday (its most recent past day), `latest`, `this week`,
+  `last week`, `weekend`, `this month` or `last month`. Template rows in `INDEX.md`
+  never count: a day needs a daily.
+- `when <name>`: the days a name is in the dailies, newest first, links and prose
+  alike (`voice pe`, `voice-pe` and `voicepe` match the same).
+- `status <name>`: the glossary entry a spoken name means, the sentences in other
+  entries that name it (a later state is often recorded there), the last days it
+  was worked on, and its open threads.
+- `todos [topic] [--closed]`: open threads, linked ones first for a topic.
+
+The fingerprint includes the script itself, so a new version of the script
+rebuilds the tables. The rebuild writes a new file and swaps it in, so a reader at
+the same moment keeps the old index instead of reading a half-built one.
+

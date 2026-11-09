@@ -13,7 +13,16 @@ Arguments: `$ARGUMENTS`
 D=debrief; [ -f debrief/INDEX.md ] || D="${DEBRIEF_DIR:?no debrief store here}"
 ```
 
-Two-step workflow — filter before you fetch, so full sections enter context only when they've earned it:
+**Questions with structure skip the search.** The search ranks by words, meaning and recency, never by date, so it cannot answer these. The same script answers them from tables it builds from the notes:
+
+```bash
+python3 "$D/.system/debrief-search.py" --dir "$D" day yesterday        # or a weekday, "last week", "weekend", YYYY-MM-DD, latest; --until for a range
+python3 "$D/.system/debrief-search.py" --dir "$D" when "voice pe"      # the days a thing is in the notes, newest first
+python3 "$D/.system/debrief-search.py" --dir "$D" status circles       # glossary entry, later states in other entries, last days, open threads
+python3 "$D/.system/debrief-search.py" --dir "$D" todos voice pe       # open threads (--closed for recent closed ones)
+```
+
+For anything else, the two-step search — filter before you fetch, so full sections enter context only when they've earned it:
 
 1. **Search.** Run:
 

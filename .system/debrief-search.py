@@ -172,8 +172,15 @@ def chunk(raw, relpath):
 SCHEMA = """
 CREATE VIRTUAL TABLE chunks USING fts5(doc, date, kind UNINDEXED, section, text);
 CREATE TABLE meta (key TEXT PRIMARY KEY, val TEXT);
+CREATE TABLE days (date TEXT PRIMARY KEY, doc TEXT, title TEXT, summary TEXT);
+CREATE TABLE sessions (sid TEXT, date TEXT, project TEXT, ended TEXT, shape TEXT, doc TEXT,
+                       PRIMARY KEY (sid, date));
+CREATE TABLE entities (name TEXT PRIMARY KEY, grp TEXT, summary TEXT);
+CREATE TABLE mentions (name TEXT, date TEXT, doc TEXT, section TEXT, n INTEGER);
+CREATE TABLE todos (text TEXT, names TEXT, opened TEXT, status TEXT);
+CREATE TABLE replaced (old_doc TEXT, old_section TEXT, new_doc TEXT, why TEXT);
 """
-SCHEMA_V = "v4"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
+SCHEMA_V = "v5"  # bump when SCHEMA or ranking changes: forces cached dbs to rebuild
 
 
 def corpus_fingerprint(debrief, docs):
@@ -188,7 +195,10 @@ def open_index(debrief):
     dbpath = os.path.join(debrief, ".system", "search.db")
     os.makedirs(os.path.dirname(dbpath), exist_ok=True)
     docs = list(collect(debrief))
-    fp = SCHEMA_V + "|" + corpus_fingerprint(debrief, docs)
+    # The script's own size and mtime too: the structure tables are derived by
+    # this code, so a new version rebuilds them without a SCHEMA_V bump.
+    me = os.stat(os.path.abspath(__file__))
+    fp = f"{SCHEMA_V}|{me.st_size}:{me.st_mtime_ns}|" + corpus_fingerprint(debrief, docs)
     db = sqlite3.connect(dbpath)
     try:
         cached = db.execute("SELECT val FROM meta WHERE key='fp'").fetchone()
@@ -199,8 +209,13 @@ def open_index(debrief):
     db.close()
     # Corpus changed (or first run): rebuild from scratch. ~dozens of small
     # markdown files — incremental indexing would be complexity, not speed.
-    os.path.exists(dbpath) and os.remove(dbpath)
-    db = sqlite3.connect(dbpath)
+    # Built beside the live file and swapped in whole, so a reader running at
+    # the same moment (eve's chat, a Claude Code session) keeps the old index
+    # instead of reading a half-built one (2026-11-09: 17 of 20 parallel
+    # searches failed mid-rebuild).
+    tmppath = f"{dbpath}.{os.getpid()}.tmp"
+    os.path.exists(tmppath) and os.remove(tmppath)
+    db = sqlite3.connect(tmppath)
     db.executescript(SCHEMA)
     n = 0
     for rel, date, kind in docs:
@@ -211,10 +226,211 @@ def open_index(debrief):
                 (rel, date or "", kind, section, text),
             )
             n += 1
+    build_structure(db, debrief, docs)
     db.execute("INSERT INTO meta VALUES ('fp', ?)", (fp,))
     db.commit()
+    db.close()
+    os.replace(tmppath, dbpath)
     print(f"(reindexed: {len(docs)} docs, {n} chunks)", file=sys.stderr)
-    return db
+    return sqlite3.connect(dbpath)
+
+
+# ---------------------------------------------------------------- structure
+#
+# The notes already carry structure: a dated daily per day, INDEX.md's day rows
+# and glossary of `[[name]]` entries, a Sessions table and addendum headings
+# per daily, TODO.md's open and closed items, SUPERSEDED.md's ledger. The text
+# search flattened all of it into chunks, so date and status questions were
+# left to ranking, which cannot answer them (2026-11-09: "what was I working on
+# yesterday" came back with two older days). These tables are derived from the
+# same Markdown at every rebuild; the Markdown stays the source of truth.
+
+DAILY = re.compile(r"^(\d{4}-\d{2}-\d{2})-[^/]+\.md$")
+LINK = re.compile(r"\[\[([^\]\[|]+?)\]\]")
+SID = re.compile(r"`([0-9a-f]{8})`")
+
+
+def _cells(line):
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+
+
+def _project(text):
+    """A project name from a cwd path or an addendum's parenthetical."""
+    text = text.strip()
+    m = re.search(r"cwd `?([^`,)]+)", text)
+    if not m and text.strip("`").startswith(("/", "~")):
+        text = text.strip("`")
+    if m or text.startswith(("/", "~")):
+        path = (m.group(1) if m else text).strip().strip("`").rstrip("/")
+        return os.path.basename(path) or path
+    for part in re.split(r",\s*", text):
+        part = part.strip().strip("`")
+        if part.startswith(("/", "~")):
+            return os.path.basename(part.rstrip("/")) or part
+        if part and not re.match(r"(ended|session|started|\d{1,2}:\d\d)\b|[0-9a-f]{8}$", part):
+            return part
+    return ""
+
+
+def build_structure(db, debrief, docs):
+    """Fill the structure tables from the curated Markdown."""
+    def read(rel):
+        try:
+            return open(os.path.join(debrief, rel), encoding="utf-8", errors="replace").read()
+        except OSError:
+            return ""
+
+    dailies = {}
+    for rel, date, kind in docs:
+        if kind == "daily" and date and DAILY.match(os.path.basename(rel)) and "/" not in rel:
+            dailies.setdefault(date, rel)
+    index = read("INDEX.md")
+    rows = {}
+    for line in index.splitlines():
+        m = re.match(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|", line)
+        if m and m.group(1) not in rows:
+            cells = _cells(line)
+            if len(cells) >= 3:
+                title = re.sub(r"^\[(.*)\]\([^)]*\)$", r"\1", cells[1])
+                rows[m.group(1)] = (title, " | ".join(cells[2:-1]) if len(cells) > 3 else cells[2])
+    for date, rel in dailies.items():
+        raw = read(rel)
+        h1 = re.search(r"^# (.+)$", raw, re.M)
+        title, summary = rows.get(date, ((h1.group(1) if h1 else rel), ""))
+        db.execute("INSERT OR REPLACE INTO days VALUES (?,?,?,?)", (date, rel, title, summary))
+        # sessions: the daily's table, then each addendum heading
+        lines = raw.splitlines()
+        for at, line in enumerate(lines):
+            cells = _cells(line) if line.startswith("|") else []
+            if len(cells) >= 3 and SID.search(cells[0]):
+                db.execute("INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?,?)",
+                           (SID.search(cells[0]).group(1), date, _project(cells[1]),
+                            cells[2] if re.match(r"\d{1,2}:\d\d", cells[2]) else "",
+                            cells[3] if len(cells) > 3 else "", rel))
+            elif line.startswith("## ") and "addendum" in line.lower() and SID.search(line):
+                head = line[3:]
+                paren = re.search(r"\(([^)]*)\)", head)
+                ended = re.search(r"ended (\d{1,2}:\d\d)", head)
+                shape = head.split(":", 1)[1].strip() if re.search(r"[)`]\s*:", head) else ""
+                proj = _project(paren.group(1)) if paren else ""
+                if not proj:     # the heading names none: the addendum's own first lines often give the cwd
+                    body = "\n".join(lines[at + 1:at + 25])
+                    cwd = re.search(r"cwd:?\s*`([^`]+)`|`((?:~|/Users/[^/`]+)/[^`\s]+)`", body)
+                    proj = _project(cwd.group(1) or cwd.group(2)) if cwd else ""
+                db.execute("INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?,?)",
+                           (SID.search(head).group(1), date, proj.strip("`)( "),
+                            ended.group(1) if ended else "", shape, rel))
+    # mentions: [[name]] links per chunk of each daily
+    for date, rel in dailies.items():
+        for doc, section, text in db.execute(
+                "SELECT doc, section, text FROM chunks WHERE doc=?", (rel,)).fetchall():
+            counts = {}
+            for name in LINK.findall(text):
+                key = name.strip().lower()
+                counts[key] = counts.get(key, 0) + 1
+            for name, n in counts.items():
+                db.execute("INSERT INTO mentions VALUES (?,?,?,?,?)", (name, date, doc, section, n))
+    # entities: INDEX.md's glossary, one `- `[[name]]` — text` entry each, under ### groups
+    gloss = re.search(r"(?ms)^## Glossary[^\n]*\n(.*?)(?=^## |\Z)", index)
+    if gloss:
+        grp, cur = "", None
+        def flush():
+            if cur:
+                db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?)",
+                           (cur[0], cur[1], " ".join(" ".join(cur[2]).split())))
+        for line in gloss.group(1).splitlines():
+            if line.startswith("### "):
+                flush()
+                grp, cur = line[4:].strip(), None
+                continue
+            m = re.match(r"^- `?\[\[([^\]]+)\]\]`?\s*(?:—|-|:)?\s*(.*)$", line)
+            if m:
+                flush()
+                cur = (m.group(1).strip().lower(), grp, [m.group(2)])
+            elif cur and line.strip():
+                cur[2].append(line.strip())
+            elif cur and not line.strip():
+                flush()
+                cur = None
+        flush()
+    # todos: TODO.md, open and closed
+    todo = read("TODO.md")
+    for status, title in (("open", "Open"), ("closed", "Closed")):
+        m = re.search(rf"(?ms)^## {title}[^\n]*\n(.*?)(?=^## |\Z)", todo)
+        if not m:
+            continue
+        for item in re.split(r"(?m)^- \[[ x]\] ", m.group(1))[1:]:
+            text = " ".join(item.split())
+            opened = re.search(r"opened (\d{4}-\d{2}-\d{2})", text)
+            names = ",".join(sorted({n.strip().lower() for n in LINK.findall(text)}))
+            db.execute("INSERT INTO todos VALUES (?,?,?,?)",
+                       (text, names, opened.group(1) if opened else "", status))
+    for (old, sec), (new, why) in load_superseded(debrief).items():
+        db.execute("INSERT INTO replaced VALUES (?,?,?,?)", (old, sec or "", new, why))
+
+
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def resolve_span(word, today):
+    """(first, last) dates a time word names, local time, or None.
+
+    A day: YYYY-MM-DD, today, yesterday, day before yesterday, a weekday (its
+    most recent past day, never today; "last"/"on" allowed). A span: this
+    week and last week (Monday to Sunday), weekend (the most recent past
+    Saturday and Sunday), this month, last month."""
+    text = " ".join(str(word or "").strip().lower().replace("_", " ").split())
+    text = re.sub(r"^(on|the|over the|last|past)\s+(?=(monday|tuesday|wednesday|thursday|friday|"
+                  r"saturday|sunday|weekend)\b)", "", text)
+    one = {"today": 0, "tonight": 0, "yesterday": 1, "last night": 1,
+           "day before yesterday": 2, "the day before yesterday": 2}
+    if text in one:
+        d = today - datetime.timedelta(days=one[text])
+        return d, d
+    if text in WEEKDAYS:
+        d = today - datetime.timedelta(days=(today.weekday() - WEEKDAYS.index(text)) % 7 or 7)
+        return d, d
+    monday = today - datetime.timedelta(days=today.weekday())
+    if text == "this week":
+        return monday, today
+    if text == "last week":
+        return monday - datetime.timedelta(days=7), monday - datetime.timedelta(days=1)
+    if text in ("weekend", "this weekend", "last weekend"):
+        sat = today - datetime.timedelta(days=(today.weekday() - 5) % 7 or 7)
+        return sat, min(sat + datetime.timedelta(days=1), today)
+    if text == "this month":
+        return today.replace(day=1), today
+    if text == "last month":
+        end = today.replace(day=1) - datetime.timedelta(days=1)
+        return end.replace(day=1), end
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return None
+    try:
+        d = datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+    return d, d
+
+
+def resolve_names(db, query):
+    """Glossary names a spoken or typed name means, best first."""
+    q = " ".join(str(query or "").lower().replace("_", " ").replace("-", " ").split())
+    if not q:
+        return []
+    flat = lambda n: n.replace("-", " ").replace("_", " ")
+    names = [n for (n,) in db.execute("SELECT name FROM entities")]
+    names += [n for (n,) in db.execute("SELECT DISTINCT name FROM mentions") if n not in names]
+    exact = [n for n in names if flat(n) == q or n == q.replace(" ", "")]
+    if exact:
+        return exact
+    words = q.split()
+    starts = sorted((n for n in names if flat(n).startswith(q)), key=len)
+    within = sorted((n for n in names if n not in starts and all(w in flat(n).split() for w in words)), key=len)
+    return (starts + within)[:6]
+
+
+def today_line(today):
+    return f"Today is {today.isoformat()} ({today:%A})."
 
 
 # ---------------------------------------------------------------- semantic
@@ -228,7 +444,7 @@ EMBED_DIM = int(os.environ.get("DEBRIEF_EMBED_DIM", "768"))
 # Floor for a meaning-only hit, on the CENTERED score (see semantic_top).
 # Measured on a 576-chunk store: real queries put their best chunk 0.03-0.11
 # above baseline, nonsense and stop-word queries 0.02 or below.
-SEM_MIN = 0.03
+SEM_MIN = float(os.environ.get("DEBRIEF_SEM_MIN", "0.03"))
 RRF_K = 60  # reciprocal-rank fusion constant (the standard one, untuned)
 
 # Recency multiplier on the fused score: FLOOR + (1 - FLOOR) * 0.5^(age/HALF_LIFE).
@@ -284,13 +500,32 @@ def ollama_embed(texts, timeout=FILL_TIMEOUT):
     return vecs
 
 
-# EmbeddingGemma 2's retrieval prompts (model card, "SearchQuery" task).
+# Each model's own retrieval prompts, from its model card: a model is asked
+# the way it was trained to be asked, never in another model's format.
+QWEN_TASK = "Given a question about the owner's past software work, retrieve the notes that answer it"
+PROMPTS = {
+    # EmbeddingGemma 2 ("SearchQuery" task)
+    "embeddinggemma": (lambda doc, sec, text: f"title: {sec} ({doc}) | text: {text}",
+                       lambda q: f"task: search result | query: {q}"),
+    # Qwen3-Embedding: an instruction on the query side only
+    "qwen3-embedding": (lambda doc, sec, text: f"{sec} ({doc})\n{text}",
+                        lambda q: f"Instruct: {QWEN_TASK}\nQuery:{q}"),
+    # BGE-M3: no instruction on either side
+    "bge-m3": (lambda doc, sec, text: f"{sec} ({doc})\n{text}", lambda q: q),
+}
+
+
+def _prompts():
+    family = next((k for k in PROMPTS if EMBED_MODEL.startswith(k)), "embeddinggemma")
+    return PROMPTS[family]
+
+
 def doc_prompt(doc, section, text):
-    return f"title: {section} ({doc}) | text: {text}"
+    return _prompts()[0](doc, section, text)
 
 
 def query_prompt(q):
-    return f"task: search result | query: {q}"
+    return _prompts()[1](q)
 
 
 def _embed(embed, texts, timeout):
@@ -602,6 +837,171 @@ def cmd_search(debrief, db, args):
     print(f"\n({len(hits)} hits, {order}; `get <id>` for full text{legend})")
 
 
+def cmd_day(debrief, db, args):
+    """A day or a span, read by date: the day's summary, sessions and parts,
+    then its note (one day), or each day's summary (a span)."""
+    today = datetime.date.today()
+    if args.date.strip().lower() == "latest":
+        row = db.execute("SELECT date FROM days WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                         (today.isoformat(),)).fetchone()
+        if not row:
+            print("The debrief has no dated notes yet.")
+            return
+        args.date, args.until = row[0], None
+    span = resolve_span(args.date, today)
+    if span is None:
+        print("date must be YYYY-MM-DD, today, yesterday, a weekday, latest, this week, last week, "
+              "weekend, this month or last month")
+        sys.exit(2)
+    first, last = span
+    if args.until:
+        end = resolve_span(args.until, today)
+        if end is None:
+            print("until must be YYYY-MM-DD, today or yesterday")
+            sys.exit(2)
+        last = end[1]
+    if last < first:
+        first, last = last, first
+    if (last - first).days >= 62:
+        print("a range is at most 62 days")
+        sys.exit(2)
+    when = (f"{first.isoformat()} ({first:%A})" if first == last
+            else f"{first.isoformat()} ({first:%a}) to {last.isoformat()} ({last:%a})")
+    days = db.execute("SELECT date, doc, title, summary FROM days WHERE date BETWEEN ? AND ? "
+                      "ORDER BY date DESC", (first.isoformat(), last.isoformat())).fetchall()
+    head = today_line(today)
+    if not days:
+        before = db.execute("SELECT max(date) FROM days WHERE date < ?", (first.isoformat(),)).fetchone()[0]
+        after = db.execute("SELECT min(date) FROM days WHERE date > ?", (last.isoformat(),)).fetchone()[0]
+        near = ", ".join(d for d in (before, after) if d)
+        print(f"{head} No debrief notes for {when}: no coding sessions were recorded then."
+              + (f" The nearest days with notes: {near}." if near else ""))
+        return
+    def sessions(date):
+        rows = db.execute("SELECT sid, project, ended, shape FROM sessions WHERE date=? ORDER BY ended",
+                          (date,)).fetchall()
+        return "; ".join(f"{p or 'unknown project'}" + (f", ended {e}" if e else "") + (f": {sh}" if sh else "")
+                         + f" ({sid})" for sid, p, e, sh in rows)
+    if first == last:
+        date, doc, title, summary = days[0]
+        print(f"{head} Debrief for {when}.\n")
+        print(f"Summary: {title}." + (f" {summary}" if summary else ""))
+        s = sessions(date)
+        if s:
+            print(f"\nSessions: {s}.")
+        raw = open(os.path.join(debrief, doc), encoding="utf-8", errors="replace").read()
+        parts = [ln[3:].strip() for ln in raw.splitlines() if ln.startswith("## ")]
+        if parts:
+            print("\nIts parts, in order: " + "; ".join(parts) + ".")
+        print(f"\nNote {doc}:\n{raw}")
+        return
+    have = {d for d, *_ in days}
+    gaps = []
+    if (last - first).days < 31:
+        every = (first + datetime.timedelta(days=i) for i in range((last - first).days + 1))
+        gaps = [f"{d:%a %b} {d.day}" for d in every if d.isoformat() not in have]
+    print(f"{head} Debrief for {when}: {len(days)} days with notes, newest first. "
+          "Ask for one day for its full note.")
+    if gaps:
+        print("No notes (no coding sessions): " + ", ".join(gaps) + ".")
+    for i, (date, doc, title, summary) in enumerate(days):
+        if i >= 7 and summary:
+            summary = re.split(r"(?<=[.!?])\s", summary, maxsplit=1)[0]
+        print(f"\n{date} ({datetime.date.fromisoformat(date):%A}): {title}." + (f" {summary}" if summary else ""))
+
+
+def cmd_when(debrief, db, args):
+    """The days a name is in the notes, newest first, with how often."""
+    today = datetime.date.today()
+    head = today_line(today)
+    # By the words, in every daily: a [[link]] counts (its hyphens match the
+    # spaces), and so does plain prose, which names things without linking.
+    words = [w for w in re.findall(r"[a-z0-9]+", args.name.lower()) if w]
+    if not words:
+        print("say what to look for")
+        sys.exit(2)
+    pat = re.compile(r"\b" + r"[\s_-]*".join(map(re.escape, words)) + r"\b", re.I)
+    rows = []
+    for date, doc in db.execute("SELECT date, doc FROM days ORDER BY date DESC").fetchall():
+        raw = open(os.path.join(debrief, doc), encoding="utf-8", errors="replace").read()
+        n = len(pat.findall(raw))
+        if n:
+            rows.append((date, n))
+    if not rows:
+        print(f"{head} No debrief note names {args.name!r}. A search also matches by meaning.")
+        return
+    shown = ", ".join(f"{d} ({datetime.date.fromisoformat(d):%a}) ×{n}" for d, n in rows[:args.limit])
+    print(f"{head} {args.name!r} is in the notes on {len(rows)} days, newest first: {shown}. First: {rows[-1][0]}.")
+
+
+def cmd_status(debrief, db, args):
+    """Where a thing stands: its glossary entry (kept current), the days it
+    was last worked on, and its open threads."""
+    today = datetime.date.today()
+    names = resolve_names(db, args.name)
+    if not names:
+        print(f"{today_line(today)} The glossary has no entry for {args.name!r}. Search the notes instead.")
+        return
+    name = names[0]
+    print(today_line(today))
+    if len(names) > 1:
+        print(f"Closest entries: {', '.join(names[:6])}; this is [[{name}]].")
+    row = db.execute("SELECT grp, summary FROM entities WHERE name=?", (name,)).fetchone()
+    if row:
+        print(f"\n[[{name}]] ({row[0]}), the glossary entry, which says where it stands now:\n{row[1]}")
+    last = db.execute("SELECT m.date, d.title FROM mentions m JOIN days d ON d.date=m.date WHERE m.name=? "
+                      "GROUP BY m.date ORDER BY m.date DESC LIMIT 3", (name,)).fetchall()
+    if last:
+        print("\nLast worked on: " + "; ".join(f"{d} ({t})" for d, t in last) + ".")
+    # A later state often sits in another entry (a feature's default kept in
+    # the entry of what uses it), so quote the sentences that name it there.
+    words = [w for w in re.findall(r"[a-z0-9]+", name.replace("-", " ")) if len(w) > 2]
+    key = words[0] if words else name
+    pat = re.compile(r"\b" + re.escape(key) + r"\b", re.I)
+    also = []
+    for other, summary in db.execute("SELECT name, summary FROM entities WHERE name != ?", (name,)):
+        hits = [x for x in re.split(r"(?<=[.;])\s+", summary) if pat.search(x)]
+        if hits:
+            dates = re.findall(r"\d{4}-\d{2}-\d{2}", summary)
+            also.append((max(dates) if dates else "", other, " ".join(hits)[:500]))
+    if also:
+        print(f"\nOther entries that name it, newest first:")
+        for _, other, text in sorted(also, reverse=True)[:4]:
+            print(f"- [[{other}]]: {text}")
+    todos = db.execute("SELECT text, opened FROM todos WHERE status='open' AND (',' || names || ',') LIKE ?",
+                       (f"%,{name},%",)).fetchall()
+    if todos:
+        print(f"\nOpen threads ({len(todos)}):")
+        for text, opened in todos[:8]:
+            print(f"- {text[:600]}")
+    else:
+        print("\nNo open threads name it.")
+
+
+def cmd_todos(debrief, db, args):
+    """Open (or recently closed) threads, best match first for a topic."""
+    status = "closed" if args.closed else "open"
+    rows = db.execute("SELECT text, names, opened FROM todos WHERE status=?", (status,)).fetchall()
+    total = len(rows)
+    topic = " ".join(args.topic or [])
+    if topic:
+        names = set(resolve_names(db, topic))
+        words = [w for w in re.findall(r"[a-z0-9]+", topic.lower()) if len(w) > 1]
+        pat = re.compile(r"\b(?:" + "|".join(map(re.escape, words)) + r")\b", re.I) if words else None
+        def score(r):
+            linked = 10 * len(names & set(filter(None, r[1].split(","))))
+            return linked + (len(pat.findall(r[0])) if pat else 0)
+        rows = [r for r in sorted(rows, key=lambda r: -score(r)) if score(r)]
+    if not rows:
+        print(f"No {status} threads match (of {total} {status}).")
+        return
+    shown = rows[:args.limit]
+    print(f"{len(rows)} {status} threads" + (" match" if topic else "") + f" (of {total})"
+          + (f"; the first {len(shown)}:" if len(rows) > len(shown) else ":"))
+    for text, _, opened in shown:
+        print(f"- {text}")
+
+
 ENTRY = re.compile(r"^#{2,3}\s*★")
 
 
@@ -620,7 +1020,8 @@ def cmd_stars(db, args):
     if not rows:
         print("no HIGHLIGHTS.md yet — `/debrief highlight <thing>` starts it")
         return
-    entries = [r for r in rows if ENTRY.match(r[2])]
+    # The template seeds worked examples marked *(example)*: not the owner's.
+    entries = [r for r in rows if ENTRY.match(r[2]) and "*(example)*" not in r[2]]
     if not entries:
         print(
             "HIGHLIGHTS.md has no ★ entries yet "
@@ -987,6 +1388,68 @@ def cmd_selftest():
         check(f"budget: a search embeds what fits ({len(part)} of {total}) and hands off the rest",
               0 < len(part) < total and fills == [td])
 
+    # The structure tables (2026-11-09): dates, sessions, glossary, threads.
+    import contextlib
+    import io
+    import types
+
+    with tempfile.TemporaryDirectory() as td2:
+        today = datetime.date.today()
+        y = (today - datetime.timedelta(days=1)).isoformat()
+        old = (today - datetime.timedelta(days=9)).isoformat()
+        w2 = lambda rel, text: open(os.path.join(td2, rel), "w").write(text)
+        w2(f"{y}-matcher.md",
+           f"# {y} matcher\n\n## Sessions\n\n| Session | Project (cwd) | Ended | Shape |\n|---|---|---|---|\n"
+           "| `aaaa1111` | `/home/me/eve` | 17:24 | bug fix |\n\n## What happened\n\nBuilt the "
+           "[[spoken-names]] matcher for the [[voice-pe]].\n\n"
+           "## Late-day addendum — session `bbbb2222` (portfolio, ended 19:13)\n\nLinks for agents.\n")
+        w2(f"{old}-voice.md", f"# {old} voice\n\n## What happened\n\nThe Voice PE got louder, voice-pe.\n")
+        w2("INDEX.md",
+           "# Index\n\n## Debriefs\n\n| Date | Debrief | TL;DR | Key |\n|---|---|---|---|\n"
+           f"| {y} | [Matcher day]({y}-matcher.md) | Built the matcher; portfolio links. | x |\n"
+           "| 2020-01-04 | [Template row](none.md) | An example. | x |\n\n"
+           "## Glossary\n\n### Systems\n\n- `[[kokoro-voice]]` — local voice, opt-in since the reversal.\n"
+           "- `[[phone-call]]` — the call; the default is aura again, kokoro is opt-in.\n\n"
+           "- `[[voice-pe]]` — the desk speaker board.\n")
+        w2("TODO.md", "# Todo\n\n## Open\n\n- [ ] `[[voice-pe]]`: hear the limiter. — opened 2026-11-07\n"
+           "- [ ] `[[circles]]`: check the map. — opened 2026-10-29\n\n## Closed (recent)\n\n- [x] done thing\n")
+        db2 = open_index(td2)
+
+        def run(fn, **kw):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                fn(td2, db2, types.SimpleNamespace(**kw))
+            return out.getvalue()
+
+        got = run(cmd_day, date="yesterday", until=None)
+        check("structure: yesterday reads that day's summary, sessions and parts before the note",
+              f"Debrief for {y}" in got and got.index("Built the matcher") < got.index("Note ")
+              and "eve, ended 17:24: bug fix (aaaa1111)" in got and "portfolio, ended 19:13" in got
+              and "Its parts, in order: Sessions; What happened; Late-day addendum" in got, got[:300])
+        got = run(cmd_day, date=old, until="today")
+        check("structure: a span lists days with notes, never template rows, and names empty days",
+              "2 days with notes" in got and "Template row" not in got and "No notes" in got, got[:300])
+        got = run(cmd_day, date=(today - datetime.timedelta(days=3)).isoformat(), until=None)
+        check("structure: an empty day says so and names the nearest", "No debrief notes" in got
+              and y in got and old in got, got)
+        got = run(cmd_when, name="Voice PE", limit=12)
+        check("structure: when counts links and prose, newest first",
+              "on 2 days" in got and got.index(y) < got.index(old), got)
+        got = run(cmd_status, name="kokoro")
+        check("structure: status quotes the entry and the later state kept in another entry",
+              "[[kokoro-voice]]" in got and "default is aura again" in got, got)
+        got = run(cmd_todos, topic=["voice", "pe"], closed=False, limit=12)
+        check("structure: todos keep the open threads about a topic",
+              "hear the limiter" in got and "check the map" not in got and "done thing" not in got, got)
+        span = resolve_span("last week", datetime.date(2026, 11, 9))
+        check("structure: last week is the Monday-to-Sunday before",
+              span == (datetime.date(2026, 11, 2), datetime.date(2026, 11, 8)))
+        check("structure: a weekday is its most recent past day, never today",
+              resolve_span("monday", datetime.date(2026, 11, 9))[0] == datetime.date(2026, 11, 2))
+        names = resolve_names(db2, "voice pe")
+        check("structure: a spoken name finds its glossary entry", names[:1] == ["voice-pe"], names)
+        db2.close()
+
     sys.exit(1 if failures else 0)
 
 
@@ -1019,6 +1482,18 @@ def main():
     )
     sub.add_parser("selftest", help="pass/fail invariants over a synthetic corpus")
     sub.add_parser("embed", help="embed every chunk the cache lacks (searches start this in the background)")
+    d = sub.add_parser("day", help="a day or span by date: today, yesterday, a weekday, last week, YYYY-MM-DD…")
+    d.add_argument("date")
+    d.add_argument("--until", help="a range's last day")
+    w = sub.add_parser("when", help="the days a project or thing is in the notes, newest first")
+    w.add_argument("name")
+    w.add_argument("-n", "--limit", type=int, default=12)
+    stt = sub.add_parser("status", help="where a project or thing stands: glossary entry, last days, open threads")
+    stt.add_argument("name")
+    td_ = sub.add_parser("todos", help="open threads (or --closed), best match first for a topic")
+    td_.add_argument("topic", nargs="*")
+    td_.add_argument("--closed", action="store_true")
+    td_.add_argument("-n", "--limit", type=int, default=12)
     args = ap.parse_args()
     if args.cmd == "selftest":
         cmd_selftest()  # needs no real corpus; exits
@@ -1028,6 +1503,8 @@ def main():
         cmd_search(debrief, db, args)
     elif args.cmd == "embed":
         cmd_embed(debrief, db)
+    elif args.cmd in ("day", "when", "status", "todos"):
+        {"day": cmd_day, "when": cmd_when, "status": cmd_status, "todos": cmd_todos}[args.cmd](debrief, db, args)
     else:
         {"get": cmd_get, "stars": cmd_stars}[args.cmd](db, args)
 

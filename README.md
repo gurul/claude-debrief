@@ -24,7 +24,9 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
   search → get progressive disclosure, plus optional meaning-based ranking with
   EmbeddingGemma 2 through a local Ollama ([search](docs/search.md#semantic-layer-embeddinggemma-2)).
   Newer memory ranks higher, and claims a later day nullified sink with a
-  `⊘ superseded by` pointer ([recency](docs/search.md#recency-and-supersession))
+  `⊘ superseded by` pointer ([recency](docs/search.md#recency-and-supersession)).
+  Date, when, status and open-thread questions are answered from tables built
+  from the same notes, not ranked ([structure](docs/search.md#structure-tables))
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
 
