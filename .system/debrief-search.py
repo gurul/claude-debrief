@@ -61,7 +61,9 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -241,6 +243,16 @@ LEDGER_LINE = re.compile(
 )
 
 
+# A search never waits on embedding work it can hand off (2026-11-09: a search
+# blocked on a stalled Ollama for the old 120 s timeout). Inside a search: the
+# query is one short call (QUERY_TIMEOUT), and chunks the cache lacks are
+# embedded only while SEARCH_EMBED_BUDGET lasts; the rest go to one detached
+# `embed` run (FILL_LOCK keeps it to one) and stay keyword-findable meanwhile.
+QUERY_TIMEOUT = float(os.environ.get("DEBRIEF_QUERY_TIMEOUT", "8"))
+SEARCH_EMBED_BUDGET = float(os.environ.get("DEBRIEF_SEARCH_EMBED_BUDGET", "3"))
+FILL_TIMEOUT = 120
+
+
 class EmbedUnavailable(Exception):
     pass
 
@@ -252,7 +264,7 @@ def unit(v, dim):
     return [x / n for x in v]
 
 
-def ollama_embed(texts):
+def ollama_embed(texts, timeout=FILL_TIMEOUT):
     """Embed texts through Ollama's /api/embed. stdlib only."""
     body = json.dumps({"model": EMBED_MODEL, "input": texts, "truncate": True,
                        "keep_alive": EMBED_KEEP_ALIVE})
@@ -260,7 +272,7 @@ def ollama_embed(texts):
         EMBED_URL + "/api/embed", body.encode(), {"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             out = json.load(r)
     except urllib.error.HTTPError as e:
         raise EmbedUnavailable(f"{EMBED_MODEL}: HTTP {e.code} {e.read()[:120]!r}")
@@ -281,7 +293,15 @@ def query_prompt(q):
     return f"task: search result | query: {q}"
 
 
-def chunk_vectors(debrief, db, embed, dim=None, batch=16):
+def _embed(embed, texts, timeout):
+    """Call embed with a timeout when it takes one (fake embedders in the selftest do not)."""
+    try:
+        return embed(texts, timeout=timeout)
+    except TypeError:
+        return embed(texts)
+
+
+def chunk_vectors(debrief, db, embed, dim=None, batch=16, budget=None):
     """rowid -> unit vector for every indexed chunk. Embeds only cache misses.
 
     The cache is a separate file because search.db is thrown away on every
@@ -305,17 +325,92 @@ def chunk_vectors(debrief, db, embed, dim=None, batch=16):
         q = "SELECT key, v FROM vec WHERE key IN (%s)" % ",".join("?" * len(part))
         have.update(cache.execute(q, part).fetchall())
     missing = [(k, p) for _, k, p in keyed if k not in have]
+    deadline = None if budget is None else time.monotonic() + budget
+    left = 0
     for i in range(0, len(missing), batch):
+        if deadline is not None and time.monotonic() >= deadline:
+            left = len(missing) - i
+            break
         part = missing[i : i + batch]
-        for (k, _), v in zip(part, embed([p for _, p in part])):
+        timeout = FILL_TIMEOUT if deadline is None else max(1.0, deadline - time.monotonic())
+        for (k, _), v in zip(part, _embed(embed, [p for _, p in part], timeout)):
             blob = array.array("f", unit(v, dim)).tobytes()
             cache.execute("INSERT OR REPLACE INTO vec VALUES (?, ?)", (k, blob))
             have[k] = blob
         cache.commit()
-    if missing:
-        print(f"(embedded {len(missing)} new chunks with {EMBED_MODEL})", file=sys.stderr)
+    if missing and len(missing) > left:
+        print(f"(embedded {len(missing) - left} new chunks with {EMBED_MODEL})", file=sys.stderr)
     cache.close()
-    return {rowid: array.array("f", have[k]) for rowid, k, _ in keyed}
+    if left:
+        print(f"({left} new chunks left to a background embed; keyword-findable now)", file=sys.stderr)
+        fill_in_background(debrief)
+    return {rowid: array.array("f", have[k]) for rowid, k, _ in keyed if k in have}
+
+
+def query_vectors(debrief, embed, prompts, dim):
+    """Unit vectors for query prompts in one call; the empty query's is cached."""
+    cpath = os.path.join(debrief, ".system", "embed-cache.db")
+    cache = sqlite3.connect(cpath)
+    cache.execute("CREATE TABLE IF NOT EXISTS vec (key TEXT PRIMARY KEY, v BLOB)")
+    keys = [hashlib.sha256(f"{EMBED_MODEL}|{dim}|q|{p}".encode()).hexdigest() for p in prompts]
+    got = {}
+    for k, p in zip(keys, prompts):
+        if p == query_prompt(""):
+            row = cache.execute("SELECT v FROM vec WHERE key=?", (k,)).fetchone()
+            if row:
+                got[p] = array.array("f", row[0])
+    need = [p for p in prompts if p not in got]
+    if need:
+        for p, v in zip(need, _embed(embed, need, QUERY_TIMEOUT)):
+            got[p] = array.array("f", unit(v, dim))
+            if p == query_prompt(""):
+                k = keys[prompts.index(p)]
+                cache.execute("INSERT OR REPLACE INTO vec VALUES (?, ?)", (k, got[p].tobytes()))
+        cache.commit()
+    cache.close()
+    return [got[p] for p in prompts]
+
+
+def fill_in_background(debrief):
+    """Start one detached `embed` run for the chunks a search left; never waits on it."""
+    lock = os.path.join(debrief, ".system", "embed-fill.lock")
+    try:
+        if time.time() - os.path.getmtime(lock) < FILL_TIMEOUT * 5:
+            return          # one is running (or died recently; the next search retries)
+    except OSError:
+        pass
+    try:
+        subprocess.Popen(
+            [sys.executable, "-I", os.path.abspath(__file__), "--dir", debrief, "embed"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+    except OSError as e:
+        print(f"(could not start the background embed: {e})", file=sys.stderr)
+
+
+def cmd_embed(debrief, db):
+    """Embed every chunk the cache lacks, one run at a time (the lock)."""
+    lock = os.path.join(debrief, ".system", "embed-fill.lock")
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        if time.time() - os.path.getmtime(lock) < FILL_TIMEOUT * 5:
+            print("(an embed run is already going)")
+            return
+        os.unlink(lock)
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        os.write(fd, str(os.getpid()).encode())
+        n = len(chunk_vectors(debrief, db, ollama_embed))
+        print(f"(embed cache covers {n} chunks)")
+    except EmbedUnavailable as e:
+        print(f"(embed failed: {e})")
+    finally:
+        os.close(fd)
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
 
 
 def semantic_top(debrief, db, query, k, embed, kinds=None, dim=None):
@@ -329,15 +424,14 @@ def semantic_top(debrief, db, query, k, embed, kinds=None, dim=None):
     "about anything". One extra embed call per search.
     """
     dim = dim or EMBED_DIM
-    vecs = chunk_vectors(debrief, db, embed, dim)
-    null = unit(embed([query_prompt("")])[0], dim)
+    vecs = chunk_vectors(debrief, db, embed, dim, budget=SEARCH_EMBED_BUDGET)
+    null, qv = query_vectors(debrief, embed, [query_prompt(""), query_prompt(query)], dim)
     if kinds:
         keep = {r for (r,) in db.execute(
             "SELECT rowid FROM chunks WHERE kind IN (%s)" % ",".join("?" * len(kinds)),
             list(kinds),
         )}
         vecs = {r: v for r, v in vecs.items() if r in keep}
-    qv = unit(embed([query_prompt(query)])[0], dim)
     scored = [
         (r, sum(a * b for a, b in zip(qv, v)) - sum(a * b for a, b in zip(null, v)))
         for r, v in vecs.items()
@@ -850,6 +944,49 @@ def cmd_selftest():
             EMBED_URL = saved
         check("fallback: unreachable embedder raises EmbedUnavailable", down)
 
+        # A stalled embedder (takes the connection, never answers) costs a
+        # search QUERY_TIMEOUT, not the fill timeout (2026-11-09).
+        import socket
+        import threading
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        held = []
+        threading.Thread(target=lambda: held.append(srv.accept()), daemon=True).start()
+        global QUERY_TIMEOUT
+        saved_url, saved_q = EMBED_URL, QUERY_TIMEOUT
+        EMBED_URL, QUERY_TIMEOUT = f"http://127.0.0.1:{srv.getsockname()[1]}", 0.5
+        started = time.monotonic()
+        try:
+            query_vectors(td, ollama_embed, [query_prompt("stall")], 64)
+            stalled = False
+        except EmbedUnavailable:
+            stalled = True
+        finally:
+            EMBED_URL, QUERY_TIMEOUT = saved_url, saved_q
+            srv.close()
+        took = time.monotonic() - started
+        check(f"stall: a silent embedder fails the query in QUERY_TIMEOUT, took {took:.1f}s",
+              stalled and took < 3)
+
+        # Chunks past the in-search budget go to one background run, and the
+        # search answers with the ones it has.
+        fills = []
+        saved_fill = globals()["fill_in_background"]
+        globals()["fill_in_background"] = fills.append
+
+        def slow_embed(texts):
+            time.sleep(0.15)
+            return fake_embed(texts)
+
+        try:
+            part = chunk_vectors(td, db, slow_embed, 32, batch=1, budget=0.2)
+        finally:
+            globals()["fill_in_background"] = saved_fill
+        total = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
+        check(f"budget: a search embeds what fits ({len(part)} of {total}) and hands off the rest",
+              0 < len(part) < total and fills == [td])
+
     sys.exit(1 if failures else 0)
 
 
@@ -881,6 +1018,7 @@ def main():
         help="also print N neighboring sections from the same doc",
     )
     sub.add_parser("selftest", help="pass/fail invariants over a synthetic corpus")
+    sub.add_parser("embed", help="embed every chunk the cache lacks (searches start this in the background)")
     args = ap.parse_args()
     if args.cmd == "selftest":
         cmd_selftest()  # needs no real corpus; exits
@@ -888,6 +1026,8 @@ def main():
     db = open_index(debrief)
     if args.cmd == "search":
         cmd_search(debrief, db, args)
+    elif args.cmd == "embed":
+        cmd_embed(debrief, db)
     else:
         {"get": cmd_get, "stars": cmd_stars}[args.cmd](db, args)
 

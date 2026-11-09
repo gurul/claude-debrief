@@ -17,3 +17,4 @@ dist/
 .system/.curate.lock
 .system/.daemon.lock
 dreams/
+.system/embed-fill.lock

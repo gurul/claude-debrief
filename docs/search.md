@@ -106,6 +106,16 @@ python3 debrief/.system/debrief-search.py search "thermal throttling"
   highlight found by meaning alone ranks by fused score.
 - No Ollama, or no model: `search` prints `(semantic off: …; keyword only)` on
   stderr and returns the plain bm25 ranking.
+- **A search never waits on embedding work.** The query and the empty-query
+  baseline go in one call with an 8-second limit (the baseline is cached), so a
+  stalled Ollama, one that takes the connection and never answers, costs 8
+  seconds and then the bm25 ranking, not the 120 the fill allows. Chunks the
+  cache lacks (new notes, or a new model) are embedded inside a search only for
+  3 seconds; the rest go to one detached `debrief-search.py embed` run (a lock
+  file keeps it to one) and stay findable by keyword meanwhile. Measured on the
+  live store with the cache deleted: the first search took 3.6 s instead of
+  about 30 s, the background run filled the cache within 40 s, and the next
+  search took 0.2 s.
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -114,6 +124,8 @@ python3 debrief/.system/debrief-search.py search "thermal throttling"
 | `DEBRIEF_EMBED_MODEL` | `embeddinggemma-2` | any Ollama embedding model |
 | `DEBRIEF_EMBED_KEEP_ALIVE` | `30m` | how long Ollama keeps the model loaded after a search |
 | `DEBRIEF_EMBED_DIM` | `768` | Matryoshka truncation: 512, 256 or 128 |
+| `DEBRIEF_QUERY_TIMEOUT` | `8` | seconds a search waits for the query's embedding |
+| `DEBRIEF_SEARCH_EMBED_BUDGET` | `3` | seconds a search spends embedding new chunks before handing the rest to `embed` |
 
 The script stays stdlib-only: it talks to Ollama over `urllib`.
 
