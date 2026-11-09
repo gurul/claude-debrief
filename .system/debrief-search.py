@@ -274,6 +274,42 @@ def _project(text):
     return ""
 
 
+STORE_PARTS = {"sessions", "archive", "debrief", ".era", ".claude", "memory", "handovers"}
+
+
+def _strip_store(path):
+    """'~/x/.era/debrief/sessions/' -> '~/x': a debrief or agent store folder is not the project."""
+    parts = path.strip().strip("`").rstrip("/").split("/")
+    while len(parts) > 1 and parts[-1] in STORE_PARTS:
+        parts.pop()
+    return "/".join(parts)
+
+
+NOT_PROJECTS = {"session", "sessions", "a", "an", "the", "one", "two", "three", "late", "early", "night", "morning",
+                "mid-morning", "afternoon", "evening", "overnight", "legacy"}
+
+
+def _addendum_project(head):
+    """The project an addendum heading names, or "".
+
+    Shapes seen: "— session `id` (ended 21:06, car project)", "— remix sessions `id` …", "— eve: what happened
+    (`id`, ended 21:30)", "(`id`, `~/x/design`, ended 22:18)". A parenthetical counts only when it carries the
+    session id or its end time; one inside the description ("(Google sign-in lapsed)") is not a project."""
+    right_after = re.search(r"`[0-9a-f]{8}`\s*\(([^)]*)\)", head)      # "session `id` (notes): …"
+    for paren in re.findall(r"\(([^)]*)\)", head):
+        if SID.search(paren) or re.search(r"ended \d{1,2}:\d\d", paren) or (
+                right_after and paren == right_after.group(1)):
+            proj = re.sub(r"\s+(project|site)$", "", _project(paren))
+            if proj:
+                return proj
+    lead = re.match(r"Late-day addendum\s*—\s*([^`(]*)", head)
+    lead = lead.group(1).strip() if lead else ""
+    m = re.match(r"([\w.-]+) sessions?\b", lead) or re.match(r"([\w.-]+)[:,]", lead)
+    if m and m.group(1).lower() not in NOT_PROJECTS:
+        return m.group(1)
+    return ""
+
+
 def build_structure(db, debrief, docs):
     """Fill the structure tables from the curated Markdown."""
     def read(rel):
@@ -311,14 +347,15 @@ def build_structure(db, debrief, docs):
                             cells[3] if len(cells) > 3 else "", rel))
             elif line.startswith("## ") and "addendum" in line.lower() and SID.search(line):
                 head = line[3:]
-                paren = re.search(r"\(([^)]*)\)", head)
                 ended = re.search(r"ended (\d{1,2}:\d\d)", head)
-                shape = head.split(":", 1)[1].strip() if re.search(r"[)`]\s*:", head) else ""
-                proj = _project(paren.group(1)) if paren else ""
+                colon = re.search(r"[)`]\s*:\s*(.*)", head)
+                shape = colon.group(1).strip() if colon else ""
+                proj = _addendum_project(head)
                 if not proj:     # the heading names none: the addendum's own first lines often give the cwd
                     body = "\n".join(lines[at + 1:at + 25])
-                    cwd = re.search(r"cwd:?\s*`([^`]+)`|`((?:~|/Users/[^/`]+)/[^`\s]+)`", body)
-                    proj = _project(cwd.group(1) or cwd.group(2)) if cwd else ""
+                    cwd = (re.search(r"cwd:?\s*`([^`]+)`", body)
+                           or re.search(r"`((?:~|/Users/[^/`]+)/[^`\s]+)`", body))
+                    proj = _project(_strip_store(cwd.group(1))) if cwd else ""
                 db.execute("INSERT OR IGNORE INTO sessions VALUES (?,?,?,?,?,?)",
                            (SID.search(head).group(1), date, proj.strip("`)( "),
                             ended.group(1) if ended else "", shape, rel))
@@ -1453,6 +1490,19 @@ def cmd_selftest():
               resolve_span("monday", datetime.date(2026, 11, 9))[0] == datetime.date(2026, 11, 2))
         names = resolve_names(db2, "voice pe")
         check("structure: a spoken name finds its glossary entry", names[:1] == ["voice-pe"], names)
+        heads = {   # made-up ids; each shape seen in a real daily
+            "Late-day addendum — session `0000aaaa` (ended 21:06, car project)": "car",
+            "Late-day addendum — site sessions `0000aaab` (ended 08:28) and `0000aaac` (ended 17:11)": "site",
+            "Late-day addendum — session `0000aaad`: empty widget (sign-in lapsed), a reminder": "",
+            "Late-day addendum — eve: the tab looked dead but ran (`0000aaae`, ended 21:30)": "eve",
+            "Late-day addendum — morning session `0000aaaf` (ended 06:49)": "",
+            "Late-day addendum — session `0000aab0` (notes): closed today": "notes",
+            "Late-day addendum — a probe, not held (`0000aab1`, `~/code/design`, ended 22:18)": "design",
+        }
+        got = {h: _addendum_project(h) for h in heads}
+        check("structure: an addendum heading names its project, never a description word", got == heads,
+              {h[22:60]: g for h, g in got.items() if g != heads[h]})
+        check("structure: a store folder is not the project", _strip_store("~/x/.era/debrief/sessions/") == "~/x")
         db2.close()
 
     sys.exit(1 if failures else 0)
