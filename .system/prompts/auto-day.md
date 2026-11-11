@@ -11,6 +11,12 @@ standing overrides. The human opted into them by setting DEBRIEF_AUTO_CURATE=1:
   Keep every claim from a machine draft in the register the draft supports;
   mark anything the draft calls unverified as unverified in the daily.
   Receipts quote the daily you wrote, verbatim, and must string-match it.
+- **Taste is recorded, not interpreted.** Carry every Shapings block from
+  the drafts into the daily and into TASTE.md with the human's words exact,
+  the scope unchanged and the reason unchanged. Never widen a scope, never
+  supply a reason, never write a reading. Readings belong to the dream pass.
+  Keep every `sessions/material/…` path a draft gives. Do not open, move or
+  edit anything under `sessions/material/`.
 - **Be stingy.** Star only lessons that would cost real time or money to
   relearn. Admit only todos that would otherwise be lost. A quiet session
   may produce an addendum and nothing else.

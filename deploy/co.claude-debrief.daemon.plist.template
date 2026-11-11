@@ -21,6 +21,8 @@
     <string>@@RAW_ARCHIVE@@</string>
     <key>DEBRIEF_RAW_RETAIN_DAYS</key>
     <string>@@RETAIN_DAYS@@</string>
+    <key>DEBRIEF_MATERIAL</key>
+    <string>@@MATERIAL@@</string>
     <key>DEBRIEF_PROJECT_MATCH</key>
     <string>@@PROJECT_MATCH@@</string>
   </dict>

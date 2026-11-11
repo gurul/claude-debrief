@@ -32,7 +32,7 @@ echo "== integration =="
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/.system" "$TMP/sessions" "$TMP/bin"
-cp "$HERE/session-debrief.sh" "$HERE/redact-transcript.py" "$TMP/.system/"
+cp "$HERE/session-debrief.sh" "$HERE/redact-transcript.py" "$HERE/extract-material.py" "$TMP/.system/"
 cp "$HERE/prompts/session-draft.md" "$TMP/.system/" 2>/dev/null || true
 mkdir -p "$TMP/.system/prompts"
 cp "$HERE/prompts/session-draft.md" "$TMP/.system/prompts/" 2>/dev/null \
@@ -182,6 +182,51 @@ if [ -n "$(find "$TMP/sessions/raw" -name '*-ffffffff.jsonl.gz' -newer "$TMP/ses
   ok "dedupe: newest archive kept"
 else
   bad "dedupe: newest archive kept"
+fi
+
+# ---- 6. material: the originals leave the transcript as files ----------------
+# A 1x1 PNG pasted by the human, and a design file the session wrote.
+PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+T="$TMP/design.jsonl"
+: > "$T"
+for i in $(seq 1 32); do
+  printf '{"type":"assistant","i":%s,"content":"line %s"}\n' "$i" "$i" >> "$T"
+done
+printf '{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"%s"}}]}}\n' "$PNG" >> "$T"
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"/w/Header.tsx","content":"export const Header = () => null"}}]}}\n' >> "$T"
+# A claude stub that keeps the prompt it was given.
+printf '#!/bin/sh\nprintf "%%s" "$2" > "%s/prompt.txt"\nexit 0\n' "$TMP" > "$TMP/bin/claude"
+
+printf '{"session_id":"%s","transcript_path":"%s","reason":"other"}' 12121212 "$T" \
+  | bash "$HOOK" >/dev/null 2>&1
+if [ ! -d "$TMP/sessions/material" ]; then
+  ok "material: off unless DEBRIEF_MATERIAL is set"
+else
+  bad "material: off unless DEBRIEF_MATERIAL is set" "a folder was written"
+fi
+
+printf '{"session_id":"%s","transcript_path":"%s","reason":"other"}' 34343434 "$T" \
+  | DEBRIEF_MATERIAL=1 bash "$HOOK" >/dev/null 2>&1
+M="$TMP/sessions/material/34343434"
+if [ -f "$M/manifest.json" ] && [ -n "$(find "$M/images" -name '*.png' 2>/dev/null)" ]; then
+  ok "material: the pasted image is a file"
+else
+  bad "material: the pasted image is a file" "$(tail -3 "$TMP/.system/hook.log")"
+fi
+if grep -q "export const Header" "$M"/code/*Header.tsx 2>/dev/null; then
+  ok "material: the design file's version is a file"
+else
+  bad "material: the design file's version is a file"
+fi
+# Both drafters run detached and write the same file: wait for this session's.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  grep -q "^SESSION_ID: 34343434\$" "$TMP/prompt.txt" 2>/dev/null && break
+  sleep 0.3
+done
+if grep -q "^MATERIAL: $M\$" "$TMP/prompt.txt" 2>/dev/null; then
+  ok "material: the drafter is told where the originals are"
+else
+  bad "material: the drafter is told where the originals are" "$(tail -4 "$TMP/prompt.txt" 2>/dev/null)"
 fi
 
 echo

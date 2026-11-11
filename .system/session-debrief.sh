@@ -109,6 +109,31 @@ PY
   fi
 }
 
+# Material (DEBRIEF_MATERIAL=1): lift the session's originals out of the
+# transcript into sessions/material/<sid8>/ as plain files: the images it saw,
+# each version of a design file it wrote, the pages it published, long text
+# and links the human gave it. A summary is one reading of a session, and the
+# next agent can only check that reading against something it can open.
+# Read from the live transcript, before redaction: a redaction pattern can
+# land inside base64 and damage an image. Text is redacted on the way out by
+# extract-material.py itself, which writes no text when the redactor is gone.
+# Never indexed: reached from a curated note through `debrief-search.py source`.
+keep_material() {
+  [ -n "${DEBRIEF_MATERIAL:-}" ] || return 0
+  local tool="$SYSTEM_DIR/extract-material.py" snap="" age out
+  [ -f "$tool" ] || { log "material: SKIPPED, extract-material.py missing"; return 0; }
+  # The files on disk belong to this session only while it is fresh. A
+  # transcript the daemon found days later gets no snapshot: the tree has
+  # moved on, and today's file is not what that session left behind.
+  age=$(( $(date +%s) - $(date -r "$TRANSCRIPT" +%s) ))
+  [ "$age" -lt 3600 ] && snap="--snapshot"
+  if out=$(python3 "$tool" "$TRANSCRIPT" "$DEBRIEF_DIR/sessions/material" --session "$SESSION_ID" $snap 2>&1); then
+    log "material: ${SESSION_ID:0:8} ${out}"
+  else
+    log "material: FAILED for ${SESSION_ID:0:8}: ${out//$'\n'/ | }"
+  fi
+}
+
 # Recursion guard: the headless drafter is itself a claude session whose exit
 # fires this same hook. It runs with DEBRIEF_GENERATION=1 in its environment.
 if [ -n "${DEBRIEF_GENERATION:-}" ]; then
@@ -129,6 +154,10 @@ TRANSCRIPT: $transcript
 SESSION_ID: $sid
 ENDED: $ended (reason: $reason)
 OUTPUT FILE: $out"
+  # The drafter links the originals it can see. No folder, no parameter.
+  local material="$DEBRIEF_DIR/sessions/material/${sid:0:8}"
+  [ -f "$material/manifest.json" ] && prompt="$prompt
+MATERIAL: $material"
   # Opt-in auto-curation (DEBRIEF_AUTO_CURATE=1): once the draft lands,
   # curate-day.sh folds it into its day with no review step. If that never
   # runs (shutdown, crash), debrief-daemon.sh catches the day up.
@@ -288,6 +317,7 @@ TIME="$(date -r "$TRANSCRIPT" +%H%M)"
 # Archive first, unconditionally. Nothing below this line may cause a session
 # to go unrecorded.
 archive_raw
+keep_material
 
 LINES=$(wc -l <"$TRANSCRIPT" | tr -d ' ')
 if [ "$LINES" -lt 30 ]; then

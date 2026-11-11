@@ -20,6 +20,12 @@ DEBRIEF_AUTO_DREAM=1:
   change of mind: keep both and mark the entry `contested`.
 - **Still don't launder.** Receipts quote curated documents verbatim and must
   string-match them. Never cite `sessions/` drafts or `sessions/raw/`.
+- **Taste readings stay hedged and scoped.** Do the "Read the taste ledger" step of Mode 4 yourself.
+  A reading needs Shapings on at least 2 different pieces, names the projects
+  it was seen in, and is written as what the human "has" done, never as what
+  they always do. When two Shapings disagree, keep both under one `contested`
+  reading. Never delete or edit a Shaping. Never turn a reading into an INDEX
+  principle or a highlight.
 - **Be stingy.** Promote only entries whose receipts span at least 2 distinct
   dailies. A quiet stretch may produce receipts and nothing else.
 - **Write the audit trail.** Every change goes into `debrief/dreams/DATE.md`:
@@ -29,4 +35,4 @@ DEBRIEF_AUTO_DREAM=1:
 - Never write outside `debrief/`. Never edit a daily. Never commit anything.
 
 When done, print one line: how many receipts, new entries, promotions,
-supersessions and INDEX fixes you applied.
+supersessions, INDEX fixes and taste readings you applied.

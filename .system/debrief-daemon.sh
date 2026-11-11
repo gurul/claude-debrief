@@ -23,6 +23,7 @@
 #   DEBRIEF_AUTO_DREAM=1      run the dream pass with no review step
 #   DEBRIEF_RAW_ARCHIVE=1     keep a redacted verbatim copy of each transcript
 #   DEBRIEF_RAW_RETAIN_DAYS   0 = keep forever (default 180)
+#   DEBRIEF_MATERIAL=1        keep each session's originals as files (docs/material.md)
 #   DEBRIEF_IDLE_MIN (30), DEBRIEF_MAX_PER_RUN (3), DEBRIEF_CURATE_AFTER_MIN (20)
 #
 # Every step is idempotent: running twice, or after a reboot mid-step, never

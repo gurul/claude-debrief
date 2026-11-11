@@ -12,7 +12,7 @@ sessions the hook missed: a closed lid, a killed terminal, a machine powered
 off straight after work. Nothing waits on a human, and a human can still read,
 correct or curate by hand at any time.
 
-Four pieces, all dependency-light (bash + python3 stdlib + node):
+Six pieces, all dependency-light (bash + python3 stdlib + node):
 
 - **Capture** — SessionEnd hook, durable queue receipt, detached drafter,
   self-repair sweep for drafters that die, and a catch-up daemon for sessions
@@ -27,6 +27,13 @@ Four pieces, all dependency-light (bash + python3 stdlib + node):
   `⊘ superseded by` pointer ([recency](docs/search.md#recency-and-supersession)).
   Date, when, status and open-thread questions are answered from tables built
   from the same notes, not ranked ([structure](docs/search.md#structure-tables))
+- **Originals** — each session's images, design-file versions, published
+  pages and pasted references are lifted out of the transcript into plain
+  files a later agent can open ([material](docs/material.md)). Never indexed:
+  a curated note leads to them through `debrief-search.py source`
+- **Taste** — a ledger of the moments the human kept, changed or rejected a
+  piece of work, in their exact words, each scoped to its piece and linked to
+  the before and after ([taste layer](docs/taste-layer.md))
 - **Provenance graph** — git-derived `session → repo → file → function`
   drill-down, rendered by a small Vite/React viewer
 
@@ -56,7 +63,10 @@ step:
 - episodic files are never rewritten, so a correction is a new entry rather
   than a quiet edit;
 - receipts quote the daily verbatim and must string-match it;
-- retrieval indexes the curated record only, never raw drafts or transcripts.
+- retrieval indexes the curated record only, never raw drafts or transcripts;
+- a note is one reading of a session, so the originals stay reachable from
+  it. A later agent can open the screenshot or the rejected version and
+  disagree with the note.
 
 > If you take one idea from this repo, take that. The hook and the viewer are
 > implementation; the line between draft and record is the point.
@@ -82,7 +92,7 @@ is never filed as a finding, and retrieval indexes only the curated record. If
 you already use one of the tools above, that separation is the part you're
 missing, not the storage.
 
-## Five layers
+## Six layers
 
 | Layer | What | Mutability |
 |---|---|---|
@@ -91,6 +101,7 @@ missing, not the storage.
 | **Starred** | `HIGHLIGHTS.md` — `★` must-know-forever entries | Append-only; **never pruned** |
 | **Todo** | `TODO.md` — open threads a day pass chose to track until resolved | Items open and close; closed items pruned once their closing daily records the outcome |
 | **Observations** | `OBSERVATIONS.md` — cross-session patterns under watch, each with receipts | Entries accumulate receipts; leave on promotion or refutation |
+| **Taste** | `TASTE.md` — Shapings (the human's exact words on one piece of work, with the before and after) and Readings (hedged guesses with receipts) | Shapings append-only; Readings revised, never deleted |
 
 Episodic files say what was believed at the time, and stay wrong on purpose.
 Corrections happen in the semantic layer, by rewiring — never by editing history.
@@ -132,16 +143,28 @@ and ≥3 new dailies since the last run), review waived, every change listed in
 approves item by item; `/debrief-dreams add` is the human-authored path.
 Rationale: [docs/dream-layer.md](docs/dream-layer.md).
 
+The taste layer exists because a judgment on one piece of work is not a rule,
+and the other layers can only store it as one. "The first banner was too loud"
+becomes an outcome in a daily and, sooner or later, a standing order in
+somebody's memory file, with the reason and the banner both gone. `TASTE.md`
+keeps the moment whole: what was there, what the human said, what it became,
+and where both versions can be opened. A Shaping covers its piece. A Reading
+needs two pieces, stays hedged, and may never be used to withhold work. The
+curator records Shapings unchanged, the dream pass writes Readings, and
+`/debrief-taste add` is the human-authored path. Rationale:
+[docs/taste-layer.md](docs/taste-layer.md).
+
 ## Lifecycle
 
 ```
 session ends ──SessionEnd hook──▶ .system/session-debrief.sh
+                                    ├─ sessions/material/<sid8>/      (DEBRIEF_MATERIAL=1: images, code versions, references)
                                     ├─ appends sessions/queue.jsonl   (durable receipt)
                                     └─ spawns headless `claude -p`    (detached)
                                          └─▶ sessions/<date>/<HHMM>-<sid>.md   status: machine-draft
                                               └─ .system/curate-day.sh   (headless /debrief day, no review)
                                                    ├─▶ <date>-<slug>.md, or a late-day addendum to it
-                                                   ├─▶ INDEX.md, HIGHLIGHTS.md, TODO.md, OBSERVATIONS.md
+                                                   ├─▶ INDEX.md, HIGHLIGHTS.md, TODO.md, OBSERVATIONS.md, TASTE.md (Shapings)
                                                    └─▶ archives the draft, marks the receipt aggregated
 
 launchd daemon (login, wake, every 15 min) ──▶ .system/debrief-daemon.sh
@@ -149,7 +172,7 @@ launchd daemon (login, wake, every 15 min) ──▶ .system/debrief-daemon.sh
                                                 ├─ queues idle transcripts the hook never saw
                                                 ├─ curates any day whose drafts nobody consumed
                                                 └─ .system/dream.sh  (DEBRIEF_AUTO_DREAM=1; ≥24 h + ≥3 new dailies)
-                                                     └─▶ OBSERVATIONS.md, SUPERSEDED.md, INDEX.md, dreams/<date>.md
+                                                     └─▶ OBSERVATIONS.md, SUPERSEDED.md, INDEX.md, TASTE.md (Readings), dreams/<date>.md
 
 by hand, any time, all optional:
 /debrief                     (in-session)    ─▶ sessions/<date>/<HHMM>-<slug>.md   status: curated
@@ -159,6 +182,7 @@ by hand, any time, all optional:
 /debrief dream               (cross-session) ─▶ proposes sightings, contested pairs, supersessions,
                                                 ≥2-daily promotions ─▶ human approves ─▶ OBSERVATIONS.md
 /debrief-dreams [add]                        ─▶ shows / appends to OBSERVATIONS.md
+/debrief-taste [topic | add]                 ─▶ shows TASTE.md entries whole / records a Shaping
 ```
 
 The queue receipt is written **before** the drafter runs, so a drafter that dies
@@ -178,10 +202,11 @@ through `$DEBRIEF_DIR`.
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p ~/claude-memory
 cp -R claude-debrief ~/claude-memory/debrief          # the store, not a checkout
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos + /debrief-dreams
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos + /debrief-dreams + /debrief-taste
 ```
 
-Keep `INDEX.md`, `TODO.md` and `OBSERVATIONS.md`, and delete the two example
+Keep `INDEX.md`, `TODO.md`, `OBSERVATIONS.md` and `TASTE.md` (remove its
+example entries), and delete the two example
 dailies plus `provenance.json` once real notes arrive.
 
 **1. Wire the hook and the store** in `~/.claude/settings.json`, so every
@@ -216,7 +241,7 @@ delay session exit.
 ```bash
 D=~/claude-memory/debrief
 sed -e "s#@@DEBRIEF_DIR@@#$D#g" -e "s#@@HOME@@#$HOME#g" -e "s#@@AUTO_CURATE@@#1#" \
-    -e "s#@@AUTO_DREAM@@#1#" -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" -e "s#@@PROJECT_MATCH@@##" \
+    -e "s#@@AUTO_DREAM@@#1#" -e "s#@@RAW_ARCHIVE@@#1#" -e "s#@@RETAIN_DAYS@@#0#" -e "s#@@MATERIAL@@#1#" -e "s#@@PROJECT_MATCH@@##" \
     $D/deploy/co.claude-debrief.daemon.plist.template > ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.claude-debrief.daemon.plist
 ```
@@ -234,7 +259,15 @@ session archives again, the hook drops an older copy only if the new copy
 contains every byte of it. Read
 [docs/verbatim-archive.md](docs/verbatim-archive.md) before turning it on.
 
-**5. Configure the graph** (optional):
+**5. Keep the originals** (optional). Add `DEBRIEF_MATERIAL=1` to the hook
+command, and use `1` for `@@MATERIAL@@`, to keep each session's images,
+design-file versions, published pages, pasted references and links as plain
+files under `sessions/material/<session>/`. Code and text are redacted on the
+way out. Images cannot be, so a screenshot that showed a secret keeps it. Read
+[docs/material.md](docs/material.md) first. To fill the folder from sessions
+already archived: `python3 .system/extract-material.py --backfill "$DEBRIEF_DIR"`.
+
+**6. Configure the graph** (optional):
 
 ```bash
 cp ~/claude-memory/debrief/.system/repos.example.json ~/claude-memory/debrief/.system/repos.json  # then edit
@@ -294,7 +327,7 @@ Manual mode usually lives inside a project, as `debrief/`:
 
 ```bash
 mkdir -p /path/to/your-repo/debrief
-cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,OBSERVATIONS.md,SUPERSEDED.md,README.md} /path/to/your-repo/debrief/
+cp -R claude-debrief/{.system,viewer,INDEX.md,HIGHLIGHTS.md,TODO.md,OBSERVATIONS.md,TASTE.md,SUPERSEDED.md,README.md} /path/to/your-repo/debrief/
 ```
 
 The layout is load-bearing: the machinery resolves paths relative to `debrief/`
@@ -383,6 +416,12 @@ The design write-ups live in [`docs/`](docs/):
 - **[Starred layer](docs/starred-layer.md)** — the append-only `★` contract.
 - **[Todo layer](docs/todo-layer.md)** — open threads tracked until resolved,
   who may admit and close items, and why search doesn't index the checklist.
+- **[Material](docs/material.md)** — what is lifted out of a transcript and
+  why, the design set, redaction and its limit for images, the snapshot of
+  uncommitted work, and the rule for an agent that opens an original.
+- **[Taste layer](docs/taste-layer.md)** — Shapings and Readings, why a
+  judgment covers its piece, why `returned to` is its own kind, and why a
+  Reading may never be used to withhold work.
 - **[Dream layer](docs/dream-layer.md)** — cross-session patterns with
   receipts, the `watching`/`contested` statuses, why disagreements are
   preserved rather than resolved, and the inceptions future-work sketch.
@@ -409,9 +448,18 @@ The design write-ups live in [`docs/`](docs/):
 - The curator never writes outside the store and never commits.
 - Multiple drafts for one `session_id`: newest wins; `curated` beats
   `machine-draft`.
-- `sessions/raw/` is cold storage — **never indexed, never auto-read**, redacted
-  before it lands (fail-closed), pruned on a retention horizon. Indexing it
-  would collapse the curation gate.
+- `sessions/raw/` is cold storage — **never indexed**, redacted before it
+  lands (fail-closed), pruned on a retention horizon. Indexing it would
+  collapse the curation gate.
+- `sessions/material/` holds a session's originals as plain files — **never
+  indexed**. An agent reaches raw or material only from a curated note
+  (`source`), to open a piece or check a claim. It never searches them for
+  answers, and never quotes them as fact.
+- **A Shaping covers its piece.** `TASTE.md` holds the human's exact words,
+  scoped to the piece they were said about, with the reason quoted or "not
+  stated". The curator copies Shapings and writes no Reading. The dream pass
+  writes Readings and edits no Shaping. A Reading is never a reason to
+  withhold work.
 - Memory is gitignored. Never commit it.
 
 ## Cost / tuning
@@ -432,6 +480,7 @@ debrief/
   HIGHLIGHTS.md             # starred layer — ★ must-know-forever (append-only, never pruned)
   TODO.md                   # todo layer — open threads tracked until resolved
   OBSERVATIONS.md           # dream layer — patterns under watch, with receipts
+  TASTE.md                  # taste layer — Shapings (the human's words on a piece) and Readings
   SUPERSEDED.md             # ledger of daily sections a later day nullified (search sinks them)
   dreams/<date>.md          # audit trail of each automatic dream pass
   README.md                 # this file
@@ -442,6 +491,7 @@ debrief/
     <date>/                 # session drafts awaiting curation
     archive/<date>/         # drafts consumed by a daily
     raw/<date>/             # opt-in REDACTED gzipped transcripts (cold storage, never indexed, pruned)
+    material/<sid8>/        # opt-in originals: images, code versions, pages, references + manifest.json (never indexed)
   .system/
     session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
     curate-day.sh           # the automatic curator (headless /debrief day, no review)
@@ -453,8 +503,9 @@ debrief/
     archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
     dream-selftest.sh       # integration selftest: dream gates + lock (stub claude)
     build-provenance.mjs    # git → provenance.json
-    debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars / --starred)
+    debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars, taste, source)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
+    extract-material.py     # lifts a session's originals out of its transcript; --backfill, --selftest
     repos.example.json      # copy to repos.json
     prompts/session-draft.md
     prompts/auto-day.md     # the curator's standing overrides
@@ -470,6 +521,7 @@ commands/
   debrief-highlights.md     # install alongside — /debrief-highlights [query] (the ★ layer)
   debrief-todos.md          # install alongside — /debrief-todos [add|done] (the todo layer)
   debrief-dreams.md         # install alongside — /debrief-dreams [add] (the dream layer)
+  debrief-taste.md          # install alongside — /debrief-taste [topic | add] (the taste layer)
 ```
 
 ## Known edges

@@ -110,9 +110,15 @@ The pane carries a standing "unverified, evidence not memory" banner and is
 styled plainer than the curated layers, because the styling should not invite a
 trust the content has not earned.
 
-**The agent rule.** An agent must not read these archives on its own initiative —
-only when a human names a specific session and asks. Everything in raw is
-unverified by construction: every abandoned theory and misread file survives
-verbatim with nothing marking it wrong. Drop a note stating this into
+**The agent rule.** An agent reads an archive in two cases only: a human names
+a session and asks, or a curated note points at the session and the agent
+needs to check a claim in that note (`debrief-search.py source <id>` prints the
+path). It reads the part it needs and treats it as what one session saw.
+Everything in raw is unverified by construction: every abandoned theory and
+misread file survives verbatim with nothing marking it wrong. So an agent
+never searches the archive for an answer that curated memory did not give,
+and never quotes it as a fact about the project. The same rule covers
+`sessions/material/` ([material](material.md)), which holds the session's
+images, code versions and pasted references as plain files. Drop a note stating this into
 `sessions/raw/README.md` in your live install (that path is gitignored here, so
 it cannot ship from this repo).
