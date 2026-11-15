@@ -1387,7 +1387,8 @@ def cmd_projects(debrief, db, args):
                 return f"{pad}{p:<28} not in the notes yet"
             span = f"{e['first']} → {e['last']}" if e["first"] else "no dated note"
             return f"{pad}{p:<28} {e['sessions']:>3} sessions  {span}  {e['shapings']} shapings"
-        grouped, nested = set(), {m for ms in reg["groups"].values() for m in ms if m in reg["groups"]}
+        # A group may list a project with its own name ("bot": ["bot", "bot-app"]): that is not nesting.
+        grouped, nested = set(), {m for g, ms in reg["groups"].items() for m in ms if m in reg["groups"] and m != g}
         for g in sorted(reg["groups"]):
             if g in nested:
                 continue  # printed under its parent
@@ -1396,6 +1397,8 @@ def cmd_projects(debrief, db, args):
                 print(line(g))
             for m in reg["groups"][g]:
                 grouped.add(m)
+                if m == g:
+                    continue  # its own line is printed above
                 if m in reg["groups"]:
                     print(f"  {m} (group)")
                     for x in reg["groups"][m]:
