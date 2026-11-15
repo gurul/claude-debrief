@@ -32,7 +32,8 @@ echo "== integration =="
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/.system" "$TMP/sessions" "$TMP/bin"
-cp "$HERE/session-debrief.sh" "$HERE/redact-transcript.py" "$HERE/extract-material.py" "$TMP/.system/"
+cp "$HERE/session-debrief.sh" "$HERE/redact-transcript.py" "$HERE/extract-material.py" \
+   "$HERE/capture-status.py" "$HERE/memory-snapshot.py" "$TMP/.system/"
 cp "$HERE/prompts/session-draft.md" "$TMP/.system/" 2>/dev/null || true
 mkdir -p "$TMP/.system/prompts"
 cp "$HERE/prompts/session-draft.md" "$TMP/.system/prompts/" 2>/dev/null \
@@ -227,6 +228,155 @@ if grep -q "^MATERIAL: $M\$" "$TMP/prompt.txt" 2>/dev/null; then
   ok "material: the drafter is told where the originals are"
 else
   bad "material: the drafter is told where the originals are" "$(tail -4 "$TMP/prompt.txt" 2>/dev/null)"
+fi
+
+# Wait until the detached drafter stub has written this session's prompt.
+wait_prompt() {
+  for _ in $(seq 1 30); do
+    grep -q "^SESSION_ID: $1\$" "$TMP/prompt.txt" 2>/dev/null && return 0
+    sleep 0.3
+  done
+  return 1
+}
+CAPTURE="$TMP/.system/capture_status.json"
+stage_field() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],{}).get(sys.argv[3]))' "$CAPTURE" "$1" "$2" 2>/dev/null
+}
+
+# ---- 7. capture status: each stage marks itself -----------------------------
+if [ "$(stage_field material failed_since_ok)" = 0 ] && [ "$(stage_field archive failed_since_ok)" = 0 ]; then
+  ok "capture: archive and material marked ok"
+else
+  bad "capture: archive and material marked ok" "$(cat "$CAPTURE" 2>/dev/null)"
+fi
+# The stub drafter writes no draft, so the draft stage fails here, as it should.
+case "$(python3 "$TMP/.system/capture-status.py" report)" in
+  *archive*|*material*) bad "capture: report silent on stages that are fine" ;;
+  *"draft ("*) ok "capture: report silent on stages that are fine, names the failing draft stage" ;;
+  *) bad "capture: report names the failing draft stage" "$(python3 "$TMP/.system/capture-status.py" report)" ;;
+esac
+mv "$TMP/.system/redact-transcript.py" "$TMP/.system/redact-transcript.py.disabled"
+run_hook 56565656
+mv "$TMP/.system/redact-transcript.py.disabled" "$TMP/.system/redact-transcript.py"
+case "$(python3 "$TMP/.system/capture-status.py" report)" in
+  *"archive (1 failed run"*) ok "capture: a missing redactor reports the archive stage" ;;
+  *) bad "capture: a missing redactor reports the archive stage" "$(python3 "$TMP/.system/capture-status.py" report)" ;;
+esac
+run_hook 57575757
+if ! python3 "$TMP/.system/capture-status.py" report | grep -q archive; then
+  ok "capture: the next good run clears it"
+else
+  bad "capture: the next good run clears it"
+fi
+
+# ---- 8. subagent transcripts go into the archive, redacted -------------------
+P="$TMP/proj"
+mkdir -p "$P/78787878/subagents/workflows/wf_1"
+cp "$T" "$P/78787878.jsonl"
+printf '{"type":"assistant","content":"DB_PASSWORD=subagentpw123"}\n' > "$P/78787878/subagents/agent-a1.jsonl"
+printf '{"type":"assistant","content":"STRIPE_SECRET_KEY=wfagentkey12345"}\n' > "$P/78787878/subagents/workflows/wf_1/agent-b2.jsonl"
+printf '{}' > "$P/78787878/subagents/agent-a1.meta.json"
+printf '{"session_id":"78787878","transcript_path":"%s","reason":"other"}' "$P/78787878.jsonl" \
+  | DEBRIEF_RAW_ARCHIVE=1 DEBRIEF_RAW_RETAIN_DAYS=0 bash "$HOOK" >/dev/null 2>&1
+SUBD="$(find "$TMP/sessions/raw" -type d -name '*-78787878.subagents' | head -1)"
+if [ -n "$SUBD" ] && [ -f "$SUBD/agent-a1.jsonl.gz" ] && [ -f "$SUBD/workflows/wf_1/agent-b2.jsonl.gz" ]; then
+  ok "subagents: nested transcripts archived beside the main copy"
+else
+  bad "subagents: nested transcripts archived beside the main copy" "$(find "$TMP/sessions/raw" | tail -5)"
+fi
+if [ -n "$SUBD" ] && ! gzip -dc "$SUBD"/agent-a1.jsonl.gz "$SUBD"/workflows/wf_1/agent-b2.jsonl.gz | grep -qE 'subagentpw123|wfagentkey12345'; then
+  ok "subagents: secrets redacted"
+else
+  bad "subagents: secrets redacted"
+fi
+# Same session again, one subagent grew: the older folder is contained, so dropped.
+printf '{"type":"assistant","content":"more"}\n' >> "$P/78787878/subagents/agent-a1.jsonl"
+mkdir -p "$TMP/sessions/raw/2020-01-07"
+mv "$SUBD" "$TMP/sessions/raw/2020-01-07/0000-78787878.subagents"
+printf '{"session_id":"78787878","transcript_path":"%s","reason":"other"}' "$P/78787878.jsonl" \
+  | DEBRIEF_RAW_ARCHIVE=1 DEBRIEF_RAW_RETAIN_DAYS=0 bash "$HOOK" >/dev/null 2>&1
+if [ ! -d "$TMP/sessions/raw/2020-01-07/0000-78787878.subagents" ] \
+   && [ -n "$(find "$TMP/sessions/raw" -type d -name '*-78787878.subagents')" ]; then
+  ok "subagents: an older contained copy is dropped, the new one kept"
+else
+  bad "subagents: an older contained copy is dropped, the new one kept"
+fi
+
+# ---- 9. memory notes: changed ones land in the session's material -------------
+mkdir -p "$P/memory"
+printf '# Memory Index\n' > "$P/memory/MEMORY.md"
+printf 'Keep it short.\n' > "$P/memory/a-note.md"
+cp "$T" "$P/90909090.jsonl"
+printf '{"session_id":"90909090","transcript_path":"%s","reason":"other"}' "$P/90909090.jsonl" \
+  | DEBRIEF_MATERIAL=1 bash "$HOOK" >/dev/null 2>&1
+if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["changed"]==["MEMORY.md","a-note.md"]' \
+     "$TMP/sessions/material/90909090/memory/index.json" 2>/dev/null; then
+  ok "memory: first session stores every note"
+else
+  bad "memory: first session stores every note" "$(tail -2 "$TMP/.system/hook.log")"
+fi
+cp "$T" "$P/91919191.jsonl"
+printf '{"session_id":"91919191","transcript_path":"%s","reason":"other"}' "$P/91919191.jsonl" \
+  | DEBRIEF_MATERIAL=1 bash "$HOOK" >/dev/null 2>&1
+if [ ! -d "$TMP/sessions/material/91919191/memory" ]; then
+  ok "memory: unchanged notes write nothing"
+else
+  bad "memory: unchanged notes write nothing"
+fi
+
+# ---- 10. headless sessions are tagged; interactive ones are not ---------------
+mk_session() {  # sid entrypoint
+  local f="$P/$1.jsonl"
+  printf '{"type":"user","entrypoint":"%s","message":{"role":"user","content":"do the thing"}}\n' "$2" > "$f"
+  cat "$T" >> "$f"
+  printf '{"session_id":"%s","transcript_path":"%s","reason":"other"}' "$1" "$f" | bash "$HOOK" >/dev/null 2>&1
+}
+mk_session a1a1a1a1 sdk-cli
+wait_prompt a1a1a1a1
+if grep -q '^SYNTHETIC: headless$' "$TMP/prompt.txt" \
+   && grep '"session_id": "a1a1a1a1"' "$TMP/sessions/queue.jsonl" | grep -q '"synthetic": "headless"'; then
+  ok "headless: queue entry and drafter input carry synthetic=headless"
+else
+  bad "headless: queue entry and drafter input carry synthetic=headless"
+fi
+mk_session b2b2b2b2 cli
+wait_prompt b2b2b2b2
+if ! grep -q '^SYNTHETIC:' "$TMP/prompt.txt" \
+   && ! grep '"session_id": "b2b2b2b2"' "$TMP/sessions/queue.jsonl" | grep -q synthetic; then
+  ok "headless: an interactive session is not tagged"
+else
+  bad "headless: an interactive session is not tagged"
+fi
+
+# ---- 11. verified reactions reach the drafter ---------------------------------
+cat > "$TMP/.system/debrief-react.py" <<'PY'
+import json, os, sys
+a = sys.argv[1:]
+sid, d = a[a.index("--session") + 1], a[a.index("--dir") + 1]
+os.makedirs(os.path.join(d, "sessions", "reactions"), exist_ok=True)
+with open(os.path.join(d, "sessions", "reactions", sid[:8] + ".jsonl"), "w") as f:
+    f.write(json.dumps({"words": "this one is right", "about": "the banner", "sentiment": "positive",
+                        "kind": "kept", "verified": True}) + "\n")
+    f.write(json.dumps({"words": "never said this", "verified": False}) + "\n")
+PY
+mk_session c3c3c3c3 cli
+wait_prompt c3c3c3c3
+if grep -q 'this one is right' "$TMP/prompt.txt" && ! grep -q 'never said this' "$TMP/prompt.txt" \
+   && [ "$(stage_field reactions failed_since_ok)" = 0 ]; then
+  ok "reactions: verified ones inline, unverified left out, stage marked"
+else
+  bad "reactions: verified ones inline, unverified left out, stage marked" "$(tail -5 "$TMP/prompt.txt")"
+fi
+rm -f "$TMP/.system/debrief-react.py"
+
+# ---- 12. every helper missing: the session is still queued ------------------
+for h in capture-status.py memory-snapshot.py extract-material.py; do mv "$TMP/.system/$h" "$TMP/.system/$h.off"; done
+mk_session d4d4d4d4 cli
+for h in capture-status.py memory-snapshot.py extract-material.py; do mv "$TMP/.system/$h.off" "$TMP/.system/$h"; done
+if grep -q '"session_id": "d4d4d4d4"' "$TMP/sessions/queue.jsonl"; then
+  ok "missing helpers: the session is still queued"
+else
+  bad "missing helpers: the session is still queued" "$(tail -3 "$TMP/.system/hook.log")"
 fi
 
 echo

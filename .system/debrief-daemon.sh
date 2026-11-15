@@ -23,6 +23,7 @@
 #   DEBRIEF_AUTO_DREAM=1      run the dream pass with no review step
 #   DEBRIEF_RAW_ARCHIVE=1     keep a redacted verbatim copy of each transcript
 #   DEBRIEF_RAW_RETAIN_DAYS   0 = keep forever (default 180)
+#   DEBRIEF_RAW_SUBAGENTS=0   leave subagent transcripts out of that copy
 #   DEBRIEF_MATERIAL=1        keep each session's originals as files (docs/material.md)
 #   DEBRIEF_IDLE_MIN (30), DEBRIEF_MAX_PER_RUN (3), DEBRIEF_CURATE_AFTER_MIN (20)
 #
@@ -61,9 +62,9 @@ if [ -d "$SYSTEM_DIR/.repair.lock" ] && [ -n "$(find "$SYSTEM_DIR/.repair.lock" 
   rmdir "$SYSTEM_DIR/.repair.lock" 2>/dev/null && log "cleared stale repair lock"
 fi
 
-# 2. Repair sweep: the hook runs it before reading its input; empty input
-#    then makes it stop there.
-bash "$SYSTEM_DIR/session-debrief.sh" </dev/null >/dev/null 2>&1
+# 2. Repair sweep: the hook runs it before reading its input, and
+#    DEBRIEF_SWEEP_ONLY makes it stop there without logging a parse skip.
+DEBRIEF_SWEEP_ONLY=1 bash "$SYSTEM_DIR/session-debrief.sh" </dev/null >/dev/null 2>&1
 
 # 3. New sessions, every project. Scratch and temp working dirs are skipped.
 handled=0

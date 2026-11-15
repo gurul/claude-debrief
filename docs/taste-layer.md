@@ -22,9 +22,14 @@ mind.
 
 **A Shaping** is one moment: the piece, what was there before and who made it,
 the human's exact words, what it became, the kind (`kept`, `changed`,
-`rejected`, `returned to`, `made by the human`), the scope, and the reason.
-Before and After carry a path under `sessions/material/` or a commit, so the
-piece can be opened ([material](material.md)).
+`rejected`, `returned to`, `made by the human`), the scope, the reason, what
+it was **On** (`built work` or `a plan`), and what the piece is **For** (the
+human's words, or `not stated`). Before and After carry a path under
+`sessions/material/` or a commit, so the piece can be opened
+([material](material.md)).
+
+The On and For lines were added on 2026-11-15. Entries from before that date
+do not have them, and nobody adds them: Shapings are never edited.
 
 **A Reading** is a guess about what the human looks for, with the Shapings
 that support it listed under it.
@@ -58,6 +63,33 @@ only from the dismissal learned the opposite of the truth. So going back to an
 earlier version, or picking up an idea that was passed over, is its own kind,
 and the drafter is told to look for it.
 
+## Approval of built work
+
+A complaint says what the human did not want. Only approval of a thing that
+was made says what they do want. In the first 73 Shapings, 41 were
+`changed`, 12 `rejected` and 11 `kept`, and some of the kept ones were a
+"yes, push" to a plan. So the drafter is told to look as hard for approval of
+built work as for complaints, and every Shaping says what it was on:
+
+- **On: built work** — the human saw a screen, a file, a render or a page.
+- **On: a plan** — the human judged a proposal or a next step not yet built.
+  It is kept, but the dream pass does not count it toward a Reading.
+
+## Reactions
+
+When the reactions tool captured the human's reactions during a session, the
+SessionEnd hook verifies them against the transcript and gives the verified
+ones to the drafter. A verified reaction is the human's exact words with the
+agent's label on it. The drafter lists them, words exact, under **How it
+landed**. It uses the words and treats the label as a guess. It makes a
+Shaping from a reaction only when the words judge a piece of work.
+
+## Headless sessions
+
+A session whose first prompt came from a script (`claude -p`, the agent SDK)
+is tagged `synthetic: headless` in the queue, and the drafter is told. Its
+prompts are not the human's words: it gives no Shapings and no quotes.
+
 ## Ideas not taken
 
 Every draft and daily also has an **Ideas not taken** section: the tangent,
@@ -73,7 +105,7 @@ starting point.
 | The day pass (curator) | Shapings, copied from the day's drafts unchanged |
 | The dream pass | Readings: new, supported, contested, set aside |
 | The human, `/debrief-taste add` | a Shaping, directly |
-| An agent inside a session | nothing |
+| An agent inside a session | nothing here. It may record a reaction to `sessions/reactions/` ([reactions](reactions.md)), which the drafter can turn into a Shaping |
 
 The day pass does not interpret, and the dream pass does not edit Shapings.
 Keeping the record and the guess in different hands is the same separation as

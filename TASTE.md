@@ -50,7 +50,8 @@ it became, and where both versions can be opened.
 Who writes here: the day pass records Shapings from the day's sessions. The
 dream pass writes and revises Readings. `/debrief-taste add` records a
 Shaping on the human's word. An agent working inside a session writes nothing
-here on its own initiative.
+here. It may record a reaction (`debrief-react.py record`), which the drafter
+can turn into a Shaping once the words are found in the human's own turns.
 
 ## Readings
 
@@ -72,6 +73,8 @@ Newest first.
 - **Kind:** changed
 - **Scope:** this piece
 - **Reason:** not stated
+- **On:** built work
+- **For:** not stated
 — from [2026-01-05-payments-retry-loop.md](2026-01-05-payments-retry-loop.md) · session `0000aaaa`
 
 ### 2026-01-04 · auth · sign-in screen *(example)*
@@ -81,6 +84,8 @@ Newest first.
 - **Kind:** changed
 - **Scope:** this piece
 - **Reason:** "the button is enough"
+- **On:** built work
+- **For:** not stated
 — from [2026-01-04-auth-session-cutover.md](2026-01-04-auth-session-cutover.md) · session `0000bbbb`
 
 ## Recall

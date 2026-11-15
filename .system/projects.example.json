@@ -1,0 +1,9 @@
+{
+  "groups": {
+    "studio": ["shop-web", "shop-ios", "kiosk"],
+    "bot": ["bot"]
+  },
+  "aliases": {
+    "shop-old": "shop-web"
+  }
+}

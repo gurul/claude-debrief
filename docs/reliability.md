@@ -12,6 +12,56 @@ Guards: recursion (the drafter is itself a Claude session whose exit fires this
 hook — `DEBRIEF_GENERATION=1` breaks the loop), missing transcript, and trivial
 sessions (<30 transcript lines).
 
+## Capture status
+
+Each SessionEnd stage marks its outcome in `.system/capture_status.json`
+(machine state, gitignored) through `.system/capture-status.py`: `archive`,
+`material`, `draft`, `memory`, `reactions`, and any stage another hook adds.
+Each stage keeps `last_ok_at`, `failed_since_ok`, `first_failed_at` and
+`last_error`. Writes take a file lock and replace the file whole, so two
+session ends at once lose no mark.
+
+While a stage is failing, the SessionStart hook adds one clause to what it
+prints, for example:
+
+```
+Debrief capture is failing: material (3 failed runs since 2026-11-12: extract-material.py missing).
+```
+
+It prints nothing while every stage is fine. Before this, a failure was one
+line in `hook.log`, among thousands of routine lines.
+
+The daemon runs the hook every 15 minutes for the repair sweep only. It sets
+`DEBRIEF_SWEEP_ONLY=1`, and the hook stops after the sweep without logging.
+That call used to log "could not parse hook input" each time, which was 2158
+of 4935 lines in a live `hook.log`. Input that is really bad is still logged.
+
+`python3 .system/capture-status.py --selftest` checks ok, fail, recovery,
+concurrent marks and silence on a clean store.
+
+## Other session-end stages
+
+- **Subagent transcripts.** With `DEBRIEF_RAW_ARCHIVE=1`, the transcripts in
+  `<session>/subagents/` (nested for workflows) are redacted file by file
+  into `sessions/raw/<date>/<HHMM>-<sid8>.subagents/`, with the same
+  retention as the main copy. `DEBRIEF_RAW_SUBAGENTS=0` leaves them out;
+  they can be large. Claude Code deletes them together with the main
+  transcript, so the daemon's late path still finds them while the main
+  transcript is there.
+- **Memory notes.** With `DEBRIEF_MATERIAL=1`, `.system/memory-snapshot.py`
+  stores each changed auto-memory note of the session's project, redacted,
+  in `sessions/material/<sid8>/memory/` with an `index.json`. The last state
+  per project is in `.system/memory-state/` (gitignored). It runs only while
+  the transcript is less than an hour old, like the file snapshot.
+- **Reactions.** When `.system/debrief-react.py` exists, the hook runs its
+  `verify` step and the drafter gets the verified reactions.
+- **Headless sessions.** When the transcript's first prompt came from a
+  script, the queue entry gets `"synthetic": "headless"` and the drafter is
+  told so.
+
+Each helper is optional. When one is missing, the hook skips that stage and
+still queues the session; `archive-selftest.sh` checks this.
+
 ## Archived drafts are not dead drafters
 
 The sweep treats an **archived** draft as proof of aggregation rather than a

@@ -3,7 +3,8 @@
 # Receives Claude Code SessionStart JSON on stdin and, on a genuine startup with
 # a non-empty backlog, injects a one-line nudge into the session's context so
 # the human learns the queue needs a `/debrief day` pass — the surfacing end of
-# a loop the SessionEnd sweep only ever logged to hook.log.
+# a loop the SessionEnd sweep only ever logged to hook.log. It also adds one
+# clause from capture-status.py while a capture stage is failing.
 #
 # Read-only w.r.t. memory. The computation is delegated to debrief-backlog.py,
 # which writes nothing. The ONLY thing this script writes is its own
@@ -42,9 +43,15 @@ fi
 # the symlink, so the CLI needn't re-derive it from its own (symlinked) path.
 LINE="$(DEBRIEF_DIR="$DEBRIEF_DIR" python3 "$SYSTEM_DIR/debrief-backlog.py" --nudge 2>/dev/null)" || LINE=""
 
-# Clean queue: emit nothing and DON'T stamp — stay armed so a backlog that
-# appears later today still surfaces on the next startup.
-[ -n "$LINE" ] || exit 0
+# A capture stage that keeps failing (archive, material, drafter, …) shows up
+# here too. capture-status.py prints nothing while every stage is fine.
+CAPTURE=""
+[ -f "$SYSTEM_DIR/capture-status.py" ] \
+  && CAPTURE="$(python3 "$SYSTEM_DIR/capture-status.py" --dir "$SYSTEM_DIR" report 2>/dev/null)" || true
+
+# Clean queue and clean capture: emit nothing and DON'T stamp — stay armed so
+# a backlog that appears later today still surfaces on the next startup.
+[ -n "$LINE" ] || [ -n "$CAPTURE" ] || exit 0
 
 # additionalContext lands in Claude's context, not on the user's screen; phrase
 # it as an imperative Claude reliably relays. The LINE already carries the
@@ -52,7 +59,11 @@ LINE="$(DEBRIEF_DIR="$DEBRIEF_DIR" python3 "$SYSTEM_DIR/debrief-backlog.py" --nu
 # "yes" from the user starts the pass. Restate the gate so no downstream step
 # is tempted to auto-drain the backlog into memory: the offer is the ONLY
 # automation here, and a declined offer changes nothing.
-CONTEXT="Before your first reply, relay this to the user: ${LINE} Only a human /debrief day pass promotes drafts into durable memory — never auto-write a daily or touch INDEX.md, and never start the pass without the user's yes."
+if [ -n "$LINE" ]; then
+  CONTEXT="Before your first reply, relay this to the user: ${LINE}${CAPTURE:+ $CAPTURE} Only a human /debrief day pass promotes drafts into durable memory — never auto-write a daily or touch INDEX.md, and never start the pass without the user's yes."
+else
+  CONTEXT="Before your first reply, relay this to the user in one line: ${CAPTURE}"
+fi
 python3 - "$CONTEXT" <<'PY'
 import json, sys
 print(json.dumps({"hookSpecificOutput": {

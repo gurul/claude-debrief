@@ -139,12 +139,22 @@ an earlier multiplier-based implementation passed a synthetic test where the ter
 lived only in `HIGHLIGHTS.md`, then lost on the real corpus. The semantic
 invariants run offline against a fake embedder: a meaning-only hit surfaces,
 the cache prevents re-embedding, the vector set equals the gated chunk set,
-and an unreachable embedder falls back to keyword search.
+and an unreachable embedder falls back to keyword search. It also covers the
+taste layer (a topic is scored without an entry's provenance line, `--project`,
+a contested Reading printed whole), `compare` (image and image, HTML and patch, a
+missing side, a path outside the store refused), `source` with and without the
+`turns/`, `screens/` and `memory/` indexes, and the projects layer
+([projects.md](projects.md)). The last line is `selftest: every check passed`
+only when every check held; otherwise it names the failures and exits 1.
 
 ## The curation gate applies to retrieval too
 
 The index holds dailies, `INDEX.md`, and `status: curated` session notes —
-never machine drafts, archived or not. A draft's content becomes searchable
+never machine drafts, archived or not. `sessions/raw/`, `sessions/material/`
+and `sessions/reactions/` are never indexed, even a note in them marked
+curated: they hold originals and the human's unreviewed reactions, which are
+evidence, never memory. The selftest plants a marker in each and asserts it
+never matches. A draft's content becomes searchable
 only by surviving `/debrief day`. Searching drafts directly would hand back
 exactly the confidently-wrong memory this system exists to prevent; an empty
 result plus "that date needs a `/debrief day` pass" is the correct behavior,
@@ -198,6 +208,33 @@ The commands that read them:
   entries that name it (a later state is often recorded there), the last days it
   was worked on, and its open threads.
 - `todos [topic] [--closed]`: open threads, linked ones first for a topic.
+- `projects [name]`: every project under its group, or one project's page.
+  `search`, `taste`, `when`, `status`, `todos` and `stars` take `--project
+  <name>` and `--loose`. See [projects.md](projects.md).
+
+## Originals and the taste layer
+
+- `source <session id | hit id>` lists what a session left behind: the redacted
+  transcript, images, code versions, published pages, pasted references, and
+  links from `manifest.json`. When the material folder has them, it also lists
+  `turns/index.jsonl` and `screens/index.jsonl` (one JSON object per line:
+  `file`, `kind`, `at`) and `memory/index.json` (`project`, `manifest`,
+  `changed`, `deleted`). A missing field prints as `?`; a bad line is skipped.
+  A manifest with `synthetic` says so on a `synthetic` line.
+- `taste [topic] [--project <name>]` prints whole taste entries. A topic is
+  scored on the entry without its provenance line (`— from [daily](…) · session
+  …`), because a daily's file name lists every project of its day. On the live
+  store on 2026-11-15 this took `taste <one project>` from 41 entries to 21, all of
+  them that project's entries.
+- `compare <id>` takes a Shaping's id from `taste` and finds the
+  `sessions/material/…` paths on its Before and After lines. `compare <pathA>
+  <pathB>` takes two paths under `sessions/material`. It writes one HTML file to
+  the system temp dir, never inside the store, and prints its path. The two
+  sides have the same height. An image is a `data:` URI, an HTML page is in an
+  `<iframe sandbox srcdoc>` with no scripts, and a code or patch file is escaped
+  text. The page's CSP loads nothing from the network. When a side has no
+  openable path, it names the side and suggests `source`. A path outside
+  `sessions/material` (by `..` or a symlink too) is refused.
 
 The fingerprint includes the script itself, so a new version of the script
 rebuilds the tables. The rebuild writes a new file and swaps it in, so a reader at

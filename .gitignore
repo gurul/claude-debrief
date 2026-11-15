@@ -18,3 +18,7 @@ dist/
 .system/.daemon.lock
 dreams/
 .system/embed-fill.lock
+.system/capture_status.json*
+.system/memory-state/
+.system/turns/
+.system/projects.json

@@ -21,8 +21,12 @@ python3 "$D/.system/debrief-search.py" --dir "$D" when "voice pe"      # the day
 python3 "$D/.system/debrief-search.py" --dir "$D" status circles       # glossary entry, later states in other entries, last days, open threads
 python3 "$D/.system/debrief-search.py" --dir "$D" todos voice pe       # open threads (--closed for recent closed ones)
 python3 "$D/.system/debrief-search.py" --dir "$D" taste "empty state"  # how the human shaped work on a topic: their words, whole entries (no topic: the Readings and the newest)
-python3 "$D/.system/debrief-search.py" --dir "$D" source 0000aaaa      # what a session left behind: transcript, images, code versions, references (also takes a hit id)
+python3 "$D/.system/debrief-search.py" --dir "$D" source 0000aaaa      # what a session left behind: transcript, images, code versions, references, turn and screen indexes (also takes a hit id)
+python3 "$D/.system/debrief-search.py" --dir "$D" compare 412          # a Shaping's before and after side by side: one HTML file in the temp dir
+python3 "$D/.system/debrief-search.py" --dir "$D" projects             # every project under its group; `projects bot` is one project's page
 ```
+
+**One project only:** add `--project <name>` to `search`, `taste`, `when`, `status`, `todos` or `stars`. A group name means all its members, and an alias means its target (`debrief/docs/projects.md`). Notes that name no project are left out, and one line says how many. Add `--loose` to include them. An unknown name prints the closest names and exits 2: pick one of them, never a guess.
 
 For anything else, the two-step search — filter before you fetch, so full sections enter context only when they've earned it:
 
@@ -52,7 +56,7 @@ For anything else, the two-step search — filter before you fetch, so full sect
 
 ## What the index covers — and deliberately doesn't
 
-Daily debriefs, `INDEX.md`, `HIGHLIGHTS.md`, `TASTE.md`, and session notes with `status: curated`. `sessions/raw/` and `sessions/material/` are never indexed: they are reached from a note with `source`, never searched. **Machine drafts are not indexed**, archived or not: their content becomes searchable only after `/debrief day` has verified or flagged its claims. If a search comes up empty but you suspect the answer is in an uncurated draft, the correct move is to tell the human that date needs a `/debrief day` pass — not to read the draft and present its claims as memory.
+Daily debriefs, `INDEX.md`, `HIGHLIGHTS.md`, `TASTE.md`, and session notes with `status: curated`. `sessions/raw/`, `sessions/material/` and `sessions/reactions/` are never indexed: they are reached from a note with `source`, never searched. **Machine drafts are not indexed**, archived or not: their content becomes searchable only after `/debrief day` has verified or flagged its claims. If a search comes up empty but you suspect the answer is in an uncurated draft, the correct move is to tell the human that date needs a `/debrief day` pass — not to read the draft and present its claims as memory.
 
 Query syntax: for the keyword half, terms are AND-ed; FTS5 syntax (`"exact phrase"`, `OR`, `NOT`) passes through when valid.
 

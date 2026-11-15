@@ -15,6 +15,15 @@ standing overrides. The human opted into them by setting DEBRIEF_AUTO_CURATE=1:
   the drafts into the daily and into TASTE.md with the human's words exact,
   the scope unchanged and the reason unchanged. Never widen a scope, never
   supply a reason, never write a reading. Readings belong to the dream pass.
+  Carry the **On:** and **For:** lines unchanged. A draft Shaping without an
+  On line gets none: do not guess one. Never add these lines to, or
+  otherwise edit, an entry already in TASTE.md.
+- **How it landed.** Carry each draft's "How it landed" lines into the
+  daily, words exact, marked with the session id. A reaction's label is the
+  agent's guess; the words are the record.
+- **Headless sessions.** A queue entry with `"synthetic": "headless"`, or a
+  draft that says so, was run by a script. Take no Shaping from it and
+  never quote its prompts as the human's words.
   Keep every `sessions/material/…` path a draft gives. Do not open, move or
   edit anything under `sessions/material/`.
 - **Be stingy.** Star only lessons that would cost real time or money to

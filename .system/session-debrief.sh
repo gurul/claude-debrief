@@ -18,6 +18,15 @@ log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$LOG"; }
 # Rotate past 1 MB: keep one previous file, so the log never grows without bound.
 [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 1048576 ] && mv -f "$LOG" "$LOG.1"
 
+# Each stage records ok or fail in .system/capture_status.json, and the
+# SessionStart hook says so while one is failing. hook.log alone was too
+# loud to notice a stage that failed for weeks. A missing helper is a no-op.
+mark() {
+  [ -f "$SYSTEM_DIR/capture-status.py" ] \
+    && python3 "$SYSTEM_DIR/capture-status.py" mark "$@" >/dev/null 2>&1
+  return 0
+}
+
 # Cold archive (DEBRIEF_RAW_ARCHIVE=1). Defined here and called BEFORE the
 # triviality gate: every session that produced a transcript is archived, even
 # the short ones. Triviality decides whether a session is worth DRAFTING, not
@@ -49,6 +58,7 @@ archive_raw() {
     RAW_OUT="$RAW_DIR/${TIME}-${SESSION_ID:0:8}.jsonl.gz"
     if [ ! -f "$REDACTOR" ]; then
       log "raw-archive: SKIPPED — redactor missing at $REDACTOR (failing closed)"
+      mark archive fail "redactor missing"
     else
       mkdir -p "$RAW_DIR"
       # Pipe, but check the redactor's status rather than gzip's: with a plain
@@ -57,12 +67,32 @@ archive_raw() {
       if REDACT_LOG=$(python3 "$REDACTOR" "$TRANSCRIPT" 2>&1 >"$RAW_DIR/.tmp.$$"); then
         if gzip -c "$RAW_DIR/.tmp.$$" >"$RAW_OUT" 2>>"$LOG"; then
           log "raw-archive: $(basename "$RAW_OUT") ($DATE) [${REDACT_LOG:-no matches}]"
+          ARCHIVE_STATE=ok
+          # Subagent transcripts sit in <transcript minus .jsonl>/subagents/,
+          # nested for workflows. The extractor reads them, and Claude Code
+          # deletes them with the main transcript, so they go into the archive
+          # too: redacted file by file, beside the main copy, same retention.
+          # DEBRIEF_RAW_SUBAGENTS=0 leaves them out (they can be large).
+          SUB_SRC="${TRANSCRIPT%.jsonl}/subagents"
+          SUB_OUT=""
+          if [ -d "$SUB_SRC" ] && [ "${DEBRIEF_RAW_SUBAGENTS:-1}" != 0 ]; then
+            SUB_OUT="${RAW_OUT%.jsonl.gz}.subagents"
+            SUB_LOG=$(python3 "$REDACTOR" --tree "$SUB_SRC" "$SUB_OUT.tmp.$$" 2>&1)
+            SUB_RC=$?
+            # Files that failed were left out, never copied raw; keep the rest.
+            rm -rf "$SUB_OUT"
+            if [ -d "$SUB_OUT.tmp.$$" ]; then mv "$SUB_OUT.tmp.$$" "$SUB_OUT"; else SUB_OUT=""; fi
+            log "raw-archive: subagents ${SUB_LOG//$'\n'/ | }"
+            [ "$SUB_RC" = 0 ] || { ARCHIVE_STATE=fail; mark archive fail "subagent redaction: $SUB_LOG"; }
+          fi
           # A resumed session archives again at each exit, and each copy holds the
           # last one. Drop an older copy only when it is a byte prefix of this one,
           # so the newest archive still holds every byte. Anything else is kept.
-          DEDUP=$(python3 - "$DEBRIEF_DIR/sessions/raw" "${SESSION_ID:0:8}" "$RAW_OUT" "$RAW_DIR/.tmp.$$" <<'PY' 2>&1
-import glob, gzip, os, sys
-raw, sid, keep, new = sys.argv[1:5]
+          # An older subagent folder goes only when every file in it is a prefix
+          # of the same file in the new folder.
+          DEDUP=$(python3 - "$DEBRIEF_DIR/sessions/raw" "${SESSION_ID:0:8}" "$RAW_OUT" "$RAW_DIR/.tmp.$$" "$SUB_OUT" <<'PY' 2>&1
+import glob, gzip, os, shutil, sys
+raw, sid, keep, new, sub = sys.argv[1:6]
 data = open(new, "rb").read()
 for f in glob.glob(os.path.join(raw, "*", "*-%s.jsonl.gz" % sid)):
     if os.path.abspath(f) == os.path.abspath(keep):
@@ -73,15 +103,36 @@ for f in glob.glob(os.path.join(raw, "*", "*-%s.jsonl.gz" % sid)):
             print("dropped " + os.path.basename(f))
     except OSError:
         pass
+if sub:
+    for d in glob.glob(os.path.join(raw, "*", "*-%s.subagents" % sid)):
+        if os.path.abspath(d) == os.path.abspath(sub):
+            continue
+        try:
+            contained = True
+            for root, _, names in os.walk(d):
+                for n in names:
+                    rel = os.path.relpath(os.path.join(root, n), d)
+                    mine = os.path.join(sub, rel)
+                    if not (os.path.exists(mine) and gzip.open(mine).read().startswith(
+                            gzip.open(os.path.join(root, n)).read())):
+                        contained = False
+            if contained:
+                shutil.rmtree(d)
+                print("dropped " + os.path.basename(d))
+        except (OSError, EOFError):
+            pass
 PY
 ) || true
           [ -n "$DEDUP" ] && log "raw-archive: ${DEDUP//$'\n'/, } (prefix of $(basename "$RAW_OUT"))"
+          [ "$ARCHIVE_STATE" = ok ] && mark archive ok
         else
           log "raw-archive: gzip failed for $SESSION_ID"
+          mark archive fail "gzip failed"
           rm -f "$RAW_OUT"
         fi
       else
         log "raw-archive: SKIPPED — redactor failed for $SESSION_ID: $REDACT_LOG"
+        mark archive fail "redactor failed: $REDACT_LOG"
       fi
       rm -f "$RAW_DIR/.tmp.$$"
     fi
@@ -120,18 +171,87 @@ PY
 # Never indexed: reached from a curated note through `debrief-search.py source`.
 keep_material() {
   [ -n "${DEBRIEF_MATERIAL:-}" ] || return 0
-  local tool="$SYSTEM_DIR/extract-material.py" snap="" age out
-  [ -f "$tool" ] || { log "material: SKIPPED, extract-material.py missing"; return 0; }
-  # The files on disk belong to this session only while it is fresh. A
-  # transcript the daemon found days later gets no snapshot: the tree has
-  # moved on, and today's file is not what that session left behind.
-  age=$(( $(date +%s) - $(date -r "$TRANSCRIPT" +%s) ))
-  [ "$age" -lt 3600 ] && snap="--snapshot"
+  local tool="$SYSTEM_DIR/extract-material.py" snap="" out
+  [ -f "$tool" ] || { log "material: SKIPPED, extract-material.py missing"; mark material fail "extract-material.py missing"; return 0; }
+  # The files on disk belong to this session only while it is fresh. The
+  # extractor decides that itself, from the last real message in the main
+  # and subagent transcripts: the file's modified time drifts, because the
+  # harness appends bookkeeping records after the last message.
+  snap="--snapshot"
   if out=$(python3 "$tool" "$TRANSCRIPT" "$DEBRIEF_DIR/sessions/material" --session "$SESSION_ID" $snap 2>&1); then
     log "material: ${SESSION_ID:0:8} ${out}"
+    mark material ok
   else
     log "material: FAILED for ${SESSION_ID:0:8}: ${out//$'\n'/ | }"
+    mark material fail "$out"
   fi
+}
+
+# Memory-note history (with DEBRIEF_MATERIAL): each changed auto-memory note
+# of this session's project, redacted, into sessions/material/<sid8>/memory/.
+# Same freshness rule as the snapshot above: days later, the folder holds
+# what later sessions wrote, not what this one left. Other tools may add
+# their own folders beside memory/; nothing here assumes a fixed set.
+keep_memory() {
+  [ -n "${DEBRIEF_MATERIAL:-}" ] || return 0
+  local tool="$SYSTEM_DIR/memory-snapshot.py" age out
+  [ -f "$tool" ] || return 0
+  age=$(( $(date +%s) - $(date -r "$TRANSCRIPT" +%s) ))
+  [ "$age" -lt 3600 ] || return 0
+  if out=$(python3 "$tool" "$TRANSCRIPT" "$DEBRIEF_DIR/sessions/material/${SESSION_ID:0:8}" 2>&1); then
+    case "$out" in
+      SKIPPED*) log "memory: ${SESSION_ID:0:8} $out"; mark memory fail "$out" ;;
+      unchanged|"no memory folder") mark memory ok ;;
+      *) log "memory: ${SESSION_ID:0:8} $out"; mark memory ok ;;
+    esac
+  else
+    log "memory: FAILED for ${SESSION_ID:0:8}: ${out//$'\n'/ | }"
+    mark memory fail "$out"
+  fi
+}
+
+# Reactions: debrief-react.py checks the reactions captured during the
+# session against the transcript and leaves the verified ones in
+# sessions/reactions/<sid8>.jsonl for the drafter. Absent script: no stage.
+verify_reactions() {
+  local tool="$SYSTEM_DIR/debrief-react.py" out
+  [ -f "$tool" ] || return 0
+  if out=$(python3 "$tool" verify --transcript "$TRANSCRIPT" --session "$SESSION_ID" --dir "$DEBRIEF_DIR" 2>&1); then
+    [ -n "$out" ] && log "reactions: ${SESSION_ID:0:8} ${out//$'\n'/ | }"
+    mark reactions ok
+  else
+    log "reactions: FAILED for ${SESSION_ID:0:8}: ${out//$'\n'/ | }"
+    mark reactions fail "$out"
+  fi
+}
+
+# Who wrote the prompts. The first user record's `entrypoint` names the
+# client: `cli` and `claude-desktop` are a person at a keyboard; `sdk-cli`
+# (claude -p) and `sdk-ts` (the agent SDK) are a script. A record that says
+# origin.kind "human" is a person whatever the client. No entrypoint (older
+# transcripts): unknown, so no tag. Prints "headless" or nothing.
+session_origin() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], errors="replace") as f:
+        for i, line in enumerate(f):
+            if i > 400:
+                break
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("type") != "user":
+                continue
+            ep = d.get("entrypoint")
+            origin = d.get("origin") if isinstance(d.get("origin"), dict) else {}
+            if ep and ep not in ("cli", "claude-desktop") and origin.get("kind") != "human":
+                print("headless")
+            break
+except Exception:
+    pass
+PY
 }
 
 # Recursion guard: the headless drafter is itself a claude session whose exit
@@ -158,6 +278,30 @@ OUTPUT FILE: $out"
   local material="$DEBRIEF_DIR/sessions/material/${sid:0:8}"
   [ -f "$material/manifest.json" ] && prompt="$prompt
 MATERIAL: $material"
+  [ "$(session_origin "$transcript")" = headless ] && prompt="$prompt
+SYNTHETIC: headless"
+  # The human's verified reactions, inline, so the drafter cannot miss them.
+  local reactions="$DEBRIEF_DIR/sessions/reactions/${sid:0:8}.jsonl" verified=""
+  if [ -s "$reactions" ]; then
+    verified="$(python3 - "$reactions" <<'PY' 2>/dev/null
+import json, sys
+keep = ("words", "about", "sentiment", "kind", "before", "after", "project", "at")
+n = 0
+for line in open(sys.argv[1], errors="replace"):
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if d.get("verified") is True and d.get("words") and n < 60:
+        print(json.dumps({k: d.get(k) for k in keep}, ensure_ascii=False))
+        n += 1
+PY
+)"
+  fi
+  [ -n "$verified" ] && prompt="$prompt
+REACTIONS: $reactions
+VERIFIED REACTIONS (one JSON object per line):
+$verified"
   # Opt-in auto-curation (DEBRIEF_AUTO_CURATE=1): once the draft lands,
   # curate-day.sh folds it into its day with no review step. If that never
   # runs (shutdown, crash), debrief-daemon.sh catches the day up.
@@ -167,6 +311,13 @@ MATERIAL: $material"
     state=MISSING; [ -f "$4" ] && state=present
     printf "%s drafter for %s exited rc=%s (draft %s)\n" \
       "$(date "+%Y-%m-%dT%H:%M:%S%z")" "$3" "$rc" "$state" >>"$2"
+    if [ -f "$5/capture-status.py" ]; then
+      if [ "$state" = present ]; then
+        python3 "$5/capture-status.py" mark draft ok >/dev/null 2>&1
+      else
+        python3 "$5/capture-status.py" mark draft fail "drafter exited rc=$rc, no draft" >/dev/null 2>&1
+      fi
+    fi
     [ "$state" = present ] && [ "$7" = 1 ] && bash "$5/curate-day.sh" "$6"
   ' _ "$prompt" "$LOG" "$sid" "$out" "$SYSTEM_DIR" "${ended%%T*}" "${DEBRIEF_AUTO_CURATE:-}" >/dev/null 2>&1 &
 }
@@ -276,6 +427,11 @@ PY
   rmdir "$REPAIR_LOCK" 2>/dev/null
 fi
 
+# The daemon runs this hook every 15 minutes for the sweep alone, with no
+# input. Stop here quietly: logging that as a parse failure was most of
+# hook.log.
+[ -n "${DEBRIEF_SWEEP_ONLY:-}" ] && exit 0
+
 INPUT="$(cat)"
 IFS=$'\t' read -r SESSION_ID TRANSCRIPT REASON < <(
   printf '%s' "$INPUT" | python3 -c '
@@ -318,6 +474,9 @@ TIME="$(date -r "$TRANSCRIPT" +%H%M)"
 # to go unrecorded.
 archive_raw
 keep_material
+keep_memory
+verify_reactions
+SYNTHETIC="$(session_origin "$TRANSCRIPT")"
 
 LINES=$(wc -l <"$TRANSCRIPT" | tr -d ' ')
 if [ "$LINES" -lt 30 ]; then
@@ -330,9 +489,10 @@ mkdir -p "$OUT_DIR"
 
 # Durable record even if the drafter fails. One JSON object per line.
 SESSION_ID="$SESSION_ID" TRANSCRIPT="$TRANSCRIPT" REASON="$REASON" \
-ENDED_AT="$ENDED_AT" QUEUED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')" DRAFT="$OUT" python3 -c '
+ENDED_AT="$ENDED_AT" QUEUED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')" DRAFT="$OUT" \
+SYNTHETIC="$SYNTHETIC" python3 -c '
 import json, os
-print(json.dumps({
+d = {
     "session_id": os.environ["SESSION_ID"],
     "transcript_path": os.environ["TRANSCRIPT"],
     "ended_at": os.environ["ENDED_AT"],
@@ -340,7 +500,11 @@ print(json.dumps({
     "reason": os.environ["REASON"],
     "draft": os.environ["DRAFT"],
     "status": "pending",
-}))
+}
+# A script wrote this session'"'"'s prompts; the drafter is told the same.
+if os.environ.get("SYNTHETIC"):
+    d["synthetic"] = os.environ["SYNTHETIC"]
+print(json.dumps(d))
 ' >>"$QUEUE"
 
 

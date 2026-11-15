@@ -29,7 +29,7 @@ echo "== integration =="
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/.system" "$TMP/sessions"
-cp "$HERE/debrief-backlog.py" "$HERE/backlog-nudge.sh" "$HERE/session-debrief.sh" "$TMP/.system/"
+cp "$HERE/debrief-backlog.py" "$HERE/backlog-nudge.sh" "$HERE/session-debrief.sh" "$HERE/capture-status.py" "$TMP/.system/"
 NUDGE="$TMP/.system/backlog-nudge.sh"
 HOOK="$TMP/.system/session-debrief.sh"
 STAMP="$TMP/.system/.backlog-nudge"
@@ -84,6 +84,41 @@ if [ -z "$outc" ]; then ok "source guard: compact silent"; else bad "compact" "$
 outr="$(printf '{"source":"resume"}' | bash "$NUDGE" 2>/dev/null)"
 if [ -z "$outr" ]; then ok "source guard: resume silent"; else bad "resume" "$outr"; fi
 if [ ! -f "$STAMP" ]; then ok "source guard: non-startup writes no stamp"; else bad "guard-stamp"; fi
+
+# ---- 7. capture status: a failing stage surfaces with no backlog -----------
+printf '{"status":"aggregated","ended_at":"2026-02-01T12:00:00-0700","draft":"%s/sessions/2026-02-01/x.md"}\n' "$TMP" > "$QUEUE"
+rm -f "$STAMP"
+python3 "$TMP/.system/capture-status.py" mark material fail "extract-material.py missing"
+out="$(printf '{"source":"startup"}' | bash "$NUDGE" 2>/dev/null)"
+if printf '%s' "$out" | python3 -c '
+import json,sys
+c=json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
+assert "Debrief capture is failing" in c and "material" in c, c
+assert "DEBRIEF BACKLOG" not in c, c
+' 2>/dev/null; then ok "capture: failing stage surfaces on a clean queue"; else bad "capture-surface" "$out"; fi
+
+# ...and rides along with a backlog line when both are there.
+printf '{"status":"unconsumed","ended_at":"2026-02-02T09:00:00-0700","draft":"%s/sessions/2026-02-02/0900-cafef00d.md"}\n' "$TMP" > "$QUEUE"
+rm -f "$STAMP"
+out="$(printf '{"source":"startup"}' | bash "$NUDGE" 2>/dev/null)"
+case "$out" in
+  *"DEBRIEF BACKLOG"*"Debrief capture is failing"*) ok "capture: clause added to the backlog line" ;;
+  *) bad "capture-with-backlog" "$out" ;;
+esac
+
+# Recovered: silent again on a clean queue.
+python3 "$TMP/.system/capture-status.py" mark material ok
+printf '{"status":"aggregated","ended_at":"2026-02-01T12:00:00-0700","draft":"%s/sessions/2026-02-01/x.md"}\n' "$TMP" > "$QUEUE"
+rm -f "$STAMP"
+out="$(printf '{"source":"startup"}' | bash "$NUDGE" 2>/dev/null)"
+if [ -z "$out" ]; then ok "capture: silent once the stage recovers"; else bad "capture-recover" "$out"; fi
+
+# ---- 8. the daemon's sweep-only call logs no parse skip --------------------
+: > "$TMP/.system/hook.log"
+DEBRIEF_SWEEP_ONLY=1 bash "$HOOK" </dev/null >/dev/null 2>&1
+if ! grep -q "could not parse hook input" "$TMP/.system/hook.log"; then ok "sweep-only: no parse-skip line"; else bad "sweep-only"; fi
+printf 'not json' | bash "$HOOK" >/dev/null 2>&1
+if grep -q "could not parse hook input" "$TMP/.system/hook.log"; then ok "sweep-only: real bad input is still logged"; else bad "bad-input-log"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$fails FAILED"; exit 1; fi

@@ -28,9 +28,20 @@ Six pieces, all dependency-light (bash + python3 stdlib + node):
   Date, when, status and open-thread questions are answered from tables built
   from the same notes, not ranked ([structure](docs/search.md#structure-tables))
 - **Originals** — each session's images, design-file versions, published
-  pages and pasted references are lifted out of the transcript into plain
-  files a later agent can open ([material](docs/material.md)). Never indexed:
-  a curated note leads to them through `debrief-search.py source`
+  pages and pasted references are lifted out of the main and subagent
+  transcripts into plain files a later agent can open
+  ([material](docs/material.md)). A stored page carries its local images and
+  styles inside one file. Never indexed: a curated note leads to them through
+  `debrief-search.py source`
+- **Turns** — an optional hook pair keeps what each turn changed in the
+  design files, however it was changed, and a screenshot of each changed
+  route from the dev server the repo already runs ([turns](docs/turns.md))
+- **Reactions** — an agent records how a piece of work landed, in the
+  human's exact words, at the moment they said it. Only words found in the
+  human's own turns are kept as theirs ([reactions](docs/reactions.md))
+- **Projects** — every command takes `--project`. A registry groups
+  projects, so one product line can be read without the rest
+  ([projects](docs/projects.md))
 - **Taste** — a ledger of the moments the human kept, changed or rejected a
   piece of work, in their exact words, each scoped to its piece and linked to
   the before and after ([taste layer](docs/taste-layer.md))
@@ -158,7 +169,8 @@ curator records Shapings unchanged, the dream pass writes Readings, and
 
 ```
 session ends ──SessionEnd hook──▶ .system/session-debrief.sh
-                                    ├─ sessions/material/<sid8>/      (DEBRIEF_MATERIAL=1: images, code versions, references)
+                                    ├─ sessions/material/<sid8>/      (DEBRIEF_MATERIAL=1: images, code versions, pages, references, memory notes)
+                                    ├─ sessions/reactions/<sid8>.jsonl (recorded reactions, checked against the human's turns)
                                     ├─ appends sessions/queue.jsonl   (durable receipt)
                                     └─ spawns headless `claude -p`    (detached)
                                          └─▶ sessions/<date>/<HHMM>-<sid>.md   status: machine-draft
@@ -183,6 +195,13 @@ by hand, any time, all optional:
                                                 ≥2-daily promotions ─▶ human approves ─▶ OBSERVATIONS.md
 /debrief-dreams [add]                        ─▶ shows / appends to OBSERVATIONS.md
 /debrief-taste [topic | add]                 ─▶ shows TASTE.md entries whole / records a Shaping
+/debrief-react                               ─▶ records one reaction, words exact
+/debrief-sentiment [topic]                   ─▶ lists reactions, counts them by project and week
+
+each prompt and each stop, when the turn hooks are installed:
+UserPromptSubmit / Stop ──▶ .system/turn-capture.py
+                              ├─▶ sessions/material/<sid8>/turns/     (what the turn changed; what changed between turns)
+                              └─▶ sessions/material/<sid8>/screens/   (DEBRIEF_SCREENS=1: desktop and phone, per changed route)
 ```
 
 The queue receipt is written **before** the drafter runs, so a drafter that dies
@@ -202,7 +221,7 @@ through `$DEBRIEF_DIR`.
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p ~/claude-memory
 cp -R claude-debrief ~/claude-memory/debrief          # the store, not a checkout
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief + /debrief-search + /debrief-backlog + /debrief-highlights + /debrief-todos + /debrief-dreams + /debrief-taste
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief, /debrief-search, /debrief-backlog, /debrief-highlights, /debrief-todos, /debrief-dreams, /debrief-taste, /debrief-react, /debrief-sentiment
 ```
 
 Keep `INDEX.md`, `TODO.md`, `OBSERVATIONS.md` and `TASTE.md` (remove its
@@ -266,6 +285,25 @@ files under `sessions/material/<session>/`. Code and text are redacted on the
 way out. Images cannot be, so a screenshot that showed a secret keeps it. Read
 [docs/material.md](docs/material.md) first. To fill the folder from sessions
 already archived: `python3 .system/extract-material.py --backfill "$DEBRIEF_DIR"`.
+With material on, the hook also keeps each changed Claude Code memory note of
+the session's project under `memory/`, so a note's history can be read later.
+
+**5a. Keep each turn** (optional). Add the `UserPromptSubmit`, `Stop` and
+`SessionEnd` hook lines from [docs/turns.md](docs/turns.md). `DEBRIEF_TURNS=1`
+keeps a patch of the design files for each turn. `DEBRIEF_SCREENS=1` also
+takes a screenshot of each changed route. The screenshot step never starts a
+server and never downloads a browser: it uses the dev server the repo already
+runs and a Playwright install it finds. It sends only read requests to that
+server and none to any other host.
+
+**5b. Group your projects** (optional). Copy `.system/projects.example.json`
+to `.system/projects.json` and name your groups. `debrief-search.py projects`
+lists what the notes hold. See [docs/projects.md](docs/projects.md).
+
+**5c. Record reactions** (optional). Tell your agents when to run
+`debrief-react.py record` (a paragraph for `CLAUDE.md` is in
+[docs/reactions.md](docs/reactions.md)). The session-end hook checks every
+recorded reaction against the transcript.
 
 **6. Configure the graph** (optional):
 
@@ -422,6 +460,13 @@ The design write-ups live in [`docs/`](docs/):
 - **[Taste layer](docs/taste-layer.md)** — Shapings and Readings, why a
   judgment covers its piece, why `returned to` is its own kind, and why a
   Reading may never be used to withhold work.
+- **[Turns](docs/turns.md)** — the per-turn patch, the between-turns patch
+  and why it is marked unverified, the screenshot step and the limits of its
+  read-only guarantee.
+- **[Reactions](docs/reactions.md)** — the record, the mechanical check of
+  the words, and why a sentiment label is the agent's guess and never a rule.
+- **[Projects](docs/projects.md)** — how a chunk gets its project, the
+  registry of groups and aliases, and what "unscoped" means.
 - **[Dream layer](docs/dream-layer.md)** — cross-session patterns with
   receipts, the `watching`/`contested` statuses, why disagreements are
   preserved rather than resolved, and the inceptions future-work sketch.
@@ -492,6 +537,8 @@ debrief/
     archive/<date>/         # drafts consumed by a daily
     raw/<date>/             # opt-in REDACTED gzipped transcripts (cold storage, never indexed, pruned)
     material/<sid8>/        # opt-in originals: images, code versions, pages, references + manifest.json (never indexed)
+                            #   turns/ screens/ memory/ sit beside them, each with its own index file
+    reactions/              # recorded reactions: inbox.jsonl, <sid8>.jsonl once checked (never indexed)
   .system/
     session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
     curate-day.sh           # the automatic curator (headless /debrief day, no review)
@@ -503,9 +550,15 @@ debrief/
     archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
     dream-selftest.sh       # integration selftest: dream gates + lock (stub claude)
     build-provenance.mjs    # git → provenance.json
-    debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars, taste, source)
+    debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars, taste, source, compare, projects, --project)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
-    extract-material.py     # lifts a session's originals out of its transcript; --backfill, --selftest
+    extract-material.py     # lifts a session's originals out of its transcripts; --backfill, --selftest
+    turn-capture.py         # the UserPromptSubmit / Stop hook: per-turn patches of the design files; --selftest
+    screen-capture.py       # screenshots of changed routes at stop (with screen-capture.mjs); --selftest
+    memory-snapshot.py      # keeps each changed Claude Code memory note; --selftest
+    debrief-react.py        # record, verify, list and count reactions; --selftest
+    capture-status.py       # one status file for every capture stage; read at session start; --selftest
+    projects.example.json   # copy to projects.json: groups and aliases
     repos.example.json      # copy to repos.json
     prompts/session-draft.md
     prompts/auto-day.md     # the curator's standing overrides
@@ -522,6 +575,8 @@ commands/
   debrief-todos.md          # install alongside — /debrief-todos [add|done] (the todo layer)
   debrief-dreams.md         # install alongside — /debrief-dreams [add] (the dream layer)
   debrief-taste.md          # install alongside — /debrief-taste [topic | add] (the taste layer)
+  debrief-react.md          # install alongside — /debrief-react (record one reaction)
+  debrief-sentiment.md      # install alongside — /debrief-sentiment [topic] (read the reactions)
 ```
 
 ## Known edges

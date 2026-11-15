@@ -25,7 +25,10 @@ DEBRIEF_AUTO_DREAM=1:
   it was seen in, and is written as what the human "has" done, never as what
   they always do. When two Shapings disagree, keep both under one `contested`
   reading. Never delete or edit a Shaping. Never turn a reading into an INDEX
-  principle or a highlight.
+  principle or a highlight. A Shaping marked `On: a plan` approved or turned
+  down a proposal, not a made thing: it does not count toward a reading about
+  taste. One with no On line is older than the field; judge it from its
+  Before line.
 - **Be stingy.** Promote only entries whose receipts span at least 2 distinct
   dailies. A quiet stretch may produce receipts and nothing else.
 - **Write the audit trail.** Every change goes into `debrief/dreams/DATE.md`:
