@@ -650,7 +650,8 @@ def main():
         if not a.quiet:
             print("screen-capture: %s" % e, file=sys.stderr)
     statuses = sorted({r["status"] for r in rows})
-    mark("ok" if statuses and set(statuses) <= {"ok"} else ("fail" if statuses else "ok"),
+    # No dev server is a normal state, not a capture failure: there was nothing to photograph.
+    mark("fail" if set(statuses) - {"ok", "no_dev_server"} else "ok",
          "%d rows: %s" % (len(rows), ", ".join(statuses) or "nothing new"))
     if not a.quiet:
         for row in rows:
