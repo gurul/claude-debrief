@@ -106,6 +106,7 @@ starting point.
 | The dream pass | Readings: new, supported, contested, set aside |
 | The human, `/debrief-taste add` | a Shaping, directly |
 | An agent inside a session | nothing here. It may record a reaction to `sessions/reactions/` ([reactions](reactions.md)), which the drafter can turn into a Shaping |
+| `debrief-signals.py adopt` | nothing here. It adds a reaction the drafter found to `sessions/reactions/`, after the words are found in a human turn ([signals](signals.md)) |
 
 The day pass does not interpret, and the dream pass does not edit Shapings.
 Keeping the record and the guess in different hands is the same separation as

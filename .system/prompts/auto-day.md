@@ -21,6 +21,13 @@ standing overrides. The human opted into them by setting DEBRIEF_AUTO_CURATE=1:
 - **How it landed.** Carry each draft's "How it landed" lines into the
   daily, words exact, marked with the session id. A reaction's label is the
   agent's guess; the words are the record.
+- **Unrecorded reactions.** A draft's "Unrecorded reactions" lines are what
+  the drafter found. They are checked before you run. Carry one into the
+  daily's "How it landed" only when `debrief/sessions/reactions/<sid8>.jsonl`
+  holds it with `"verified": true` and `"source": "drafter"`, words exact,
+  marked "found by the drafter". Leave out a line the file marks
+  `"verified": false`: those words were not found in the human's turns. Do
+  not carry the "Label check" section.
 - **Headless sessions.** A queue entry with `"synthetic": "headless"`, or a
   draft that says so, was run by a script. Take no Shaping from it and
   never quote its prompts as the human's words.

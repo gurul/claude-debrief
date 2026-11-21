@@ -2,7 +2,7 @@
 """capture-status — one small record of which capture stage is failing.
 
 The SessionEnd hook runs several stages per session (archive, material,
-draft, memory, reactions, and whatever other hooks add). Before this file a
+draft, memory, reactions, signals, and whatever other hooks add). Before this file a
 failed stage only wrote a line to hook.log, among thousands of routine lines,
 so a stage could fail for weeks unseen. Each stage now marks itself here, and
 the SessionStart hook prints one clause while any stage is failing.

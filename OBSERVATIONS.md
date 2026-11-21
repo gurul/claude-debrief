@@ -57,6 +57,7 @@ Candidate INDEX principle once it recurs outside payments.
 
 — seen in [2026-01-05 payments retry loop](2026-01-05-payments-retry-loop.md) · 2026-01-05
   "we tuned the backoff twice and it looked better, because the race got rarer"
+— check: a test that fires two charges at once and counts the rows
 — status: watching · 1 daily
 
 ## Contested
@@ -76,6 +77,8 @@ house rule.
 
 - `/debrief-dreams` — print this file (cheapest possible recall).
 - `/debrief-dreams add <observation>` — human-authored, writes directly.
+- `/debrief-signals principles` — which promoted principles still recur
+  after promotion, counted by receipt date (see `docs/signals.md`).
 - `/debrief dream` — the cross-session pass: matches new dailies against these
   entries, proposes new ones, promotions, and refutations — all human-approved.
 - This file is deliberately **not** indexed by `/debrief-search`: it is a

@@ -74,6 +74,32 @@ Staleness is surfaced, not enforced: a `watching` entry with no new sighting
 in ~90 days gets a "reconfirm or drop?" proposal at the next dream pass. The
 human decides; nothing ages out on its own.
 
+## After promotion: has the principle held?
+
+A promoted principle used to be the end of the line. Receipts kept arriving
+under it and nobody read the dates. In one live store, 8 of 14 principles had
+receipts on two or more dates after their promotion.
+
+`debrief-signals.py principles` counts, by rule, the receipt dates after each
+principle's promotion ([signals](signals.md)). It sorts principles into three
+groups:
+
+- **Still recurring**: two or more dates after promotion. The text has not
+  stopped it. The next step is a mechanism: a hook, a CI check, a test.
+- **Enforced**: the principle carries
+  `— enforced by: <what> · since <date>` in `INDEX.md`. A mechanism holds it
+  now. With no receipt since, the text may leave INDEX and stop costing every
+  session a line of context. The receipts stay in this file.
+- **Quiet**: one date or none after promotion.
+
+The dream pass copies the still-recurring lines into its audit file and
+proposes one mechanism for each. It installs nothing and removes nothing.
+The human adds the `— enforced by:` line after the mechanism exists.
+
+A new `watching` entry may also carry `— check: <the command, hook or test
+that could decide it>`, or `— check: none`. It is written when the pattern is
+first seen, because that is when the failing case is at hand.
+
 ## The gate applies here too
 
 The failure mode is specific: an agent that promotes its own observation

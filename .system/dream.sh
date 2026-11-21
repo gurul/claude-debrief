@@ -52,10 +52,18 @@ trap 'rm -rf "$LOCK"' EXIT
 today="$(date +%F)"
 mkdir -p "$DEBRIEF_DIR/dreams"
 log "dream: starting (last dream: $last)"
+# Has each promoted principle stopped the thing it names? Counted by rule
+# here, because the dream pass has no shell. Absent script: no report.
+report=""
+[ -f "$SYSTEM_DIR/debrief-signals.py" ] \
+  && report="$(python3 "$SYSTEM_DIR/debrief-signals.py" principles --dir "$DEBRIEF_DIR" 2>/dev/null)"
 prompt="$(cat "$SYSTEM_DIR/prompts/auto-dream.md")
 
 DATE: $today
-
+${report:+
+PRINCIPLES REPORT (from debrief-signals.py principles; dates only):
+$report
+}
 --- /debrief command text ---
 $(cat "$HOME/.claude/commands/debrief.md" 2>/dev/null)"
 

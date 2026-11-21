@@ -29,10 +29,24 @@ DEBRIEF_AUTO_DREAM=1:
   down a proposal, not a made thing: it does not count toward a reading about
   taste. One with no On line is older than the field; judge it from its
   Before line.
+- **Read the PRINCIPLES REPORT when one is appended.** It counts receipt
+  dates after each principle's promotion, by rule. Copy its STILL RECURRING
+  lines into the audit file under "Principles still recurring after
+  promotion". For each, add one line that proposes a mechanism a person could
+  install: a hook, a CI check or a test. Propose only. Install nothing, and
+  add no `— enforced by:` line yourself. Never remove or reword a principle
+  because of the report. A principle the report lists under ENFORCED with no
+  date after enforcement gets one line under "May leave INDEX on the human's
+  word". It stays in INDEX.
+- **Say how a new observation could be checked.** When you write a new
+  `watching` entry, add one line above its status line:
+  `— check: <the command, hook or test that could decide it>`. Write
+  `— check: none` when only a person can tell.
 - **Be stingy.** Promote only entries whose receipts span at least 2 distinct
   dailies. A quiet stretch may produce receipts and nothing else.
 - **Write the audit trail.** Every change goes into `debrief/dreams/DATE.md`:
-  one line per change, with its file, what changed, and the receipt. This file
+  one line per change, with its file, what changed, and the receipt. The two
+  report sections above go in the same file. This file
   is the human's review surface, after the fact. Then set the
   `last dream: DATE` footer in OBSERVATIONS.md.
 - Never write outside `debrief/`. Never edit a daily. Never commit anything.

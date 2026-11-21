@@ -97,7 +97,7 @@ def find_debrief_dir(cli_dir):
 FM_STATUS = re.compile(r"^status:\s*(\S+)", re.M)
 HEADING = re.compile(r"^(#{1,3})\s+(.+)$", re.M)
 DAILY = re.compile(r"^\d{4}-\d{2}-\d{2}.*\.md$")
-ORIGINALS_DIRS = ("raw", "material", "reactions")  # under sessions/: never indexed
+ORIGINALS_DIRS = ("raw", "material", "reactions", "signals")  # under sessions/: never indexed
 
 
 def frontmatter_status(raw):

@@ -39,6 +39,12 @@ Six pieces, all dependency-light (bash + python3 stdlib + node):
 - **Reactions** — an agent records how a piece of work landed, in the
   human's exact words, at the moment they said it. Only words found in the
   human's own turns are kept as theirs ([reactions](docs/reactions.md))
+- **Signals** — after a session, every human turn is read by pattern, with
+  no model: which turns no recorded reaction covers, the standing rules the
+  human stated, and what the agent claimed or checked just before the human
+  spoke. The drafter may name a reaction nobody recorded, and it counts only
+  when the words are found in a human turn. A report counts the promoted
+  principles that still recur ([signals](docs/signals.md))
 - **Projects** — every command takes `--project`. A registry groups
   projects, so one product line can be read without the rest
   ([projects](docs/projects.md))
@@ -171,9 +177,11 @@ curator records Shapings unchanged, the dream pass writes Readings, and
 session ends ──SessionEnd hook──▶ .system/session-debrief.sh
                                     ├─ sessions/material/<sid8>/      (DEBRIEF_MATERIAL=1: images, code versions, pages, references, memory notes)
                                     ├─ sessions/reactions/<sid8>.jsonl (recorded reactions, checked against the human's turns)
+                                    ├─ sessions/signals/<sid8>.json    (each human turn read by rule: uncovered turns, stated rules, claims and checks)
                                     ├─ appends sessions/queue.jsonl   (durable receipt)
                                     └─ spawns headless `claude -p`    (detached)
                                          └─▶ sessions/<date>/<HHMM>-<sid>.md   status: machine-draft
+                                              ├─ debrief-signals.py adopt   (a reaction the drafter found is kept only when its words are in a human turn)
                                               └─ .system/curate-day.sh   (headless /debrief day, no review)
                                                    ├─▶ <date>-<slug>.md, or a late-day addendum to it
                                                    ├─▶ INDEX.md, HIGHLIGHTS.md, TODO.md, OBSERVATIONS.md, TASTE.md (Shapings)
@@ -197,6 +205,7 @@ by hand, any time, all optional:
 /debrief-taste [topic | add]                 ─▶ shows TASTE.md entries whole / records a Shaping
 /debrief-react                               ─▶ records one reaction, words exact
 /debrief-sentiment [topic]                   ─▶ lists reactions, counts them by project and week
+/debrief-signals [landed|rules|principles]   ─▶ claims then corrected, stated rules, principles that still recur
 
 each prompt and each stop, when the turn hooks are installed:
 UserPromptSubmit / Stop ──▶ .system/turn-capture.py
@@ -221,7 +230,7 @@ through `$DEBRIEF_DIR`.
 git clone https://github.com/gurul/claude-debrief.git
 mkdir -p ~/claude-memory
 cp -R claude-debrief ~/claude-memory/debrief          # the store, not a checkout
-cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief, /debrief-search, /debrief-backlog, /debrief-highlights, /debrief-todos, /debrief-dreams, /debrief-taste, /debrief-react, /debrief-sentiment
+cp claude-debrief/commands/*.md ~/.claude/commands/    # /debrief, /debrief-search, /debrief-backlog, /debrief-highlights, /debrief-todos, /debrief-dreams, /debrief-taste, /debrief-react, /debrief-sentiment, /debrief-signals
 ```
 
 Keep `INDEX.md`, `TODO.md`, `OBSERVATIONS.md` and `TASTE.md` (remove its
@@ -465,6 +474,9 @@ The design write-ups live in [`docs/`](docs/):
   read-only guarantee.
 - **[Reactions](docs/reactions.md)** — the record, the mechanical check of
   the words, and why a sentiment label is the agent's guess and never a rule.
+- **[Signals](docs/signals.md)** — the three patterns and their limits, how
+  a reaction nobody recorded gets checked, the second reading of a label, and
+  the report on whether a promoted principle has held.
 - **[Projects](docs/projects.md)** — how a chunk gets its project, the
   registry of groups and aliases, and what "unscoped" means.
 - **[Dream layer](docs/dream-layer.md)** — cross-session patterns with
@@ -539,6 +551,7 @@ debrief/
     material/<sid8>/        # opt-in originals: images, code versions, pages, references + manifest.json (never indexed)
                             #   turns/ screens/ memory/ sit beside them, each with its own index file
     reactions/              # recorded reactions: inbox.jsonl, <sid8>.jsonl once checked (never indexed)
+    signals/                # <sid8>.json: each human turn read by rule at session end (never indexed)
   .system/
     session-debrief.sh      # the SessionEnd hook (queue + drafter + self-repair sweep)
     curate-day.sh           # the automatic curator (headless /debrief day, no review)
@@ -549,6 +562,7 @@ debrief/
     backlog-selftest.sh     # integration selftest: sweep heal + nudge + gate invariants
     archive-selftest.sh     # integration selftest: redaction + fail-closed + retention
     dream-selftest.sh       # integration selftest: dream gates + lock (stub claude)
+    signals-selftest.sh     # integration selftest: signals stage, drafter block, adoption, dream report (stub claude)
     build-provenance.mjs    # git → provenance.json
     debrief-search.py       # FTS5 + EmbeddingGemma 2 retrieval over curated memory (+ stars, taste, source, compare, projects, --project)
     redact-transcript.py    # scrubs secrets out of raw archives (fail-closed); --selftest
@@ -557,6 +571,7 @@ debrief/
     screen-capture.py       # screenshots of changed routes at stop (with screen-capture.mjs); --selftest
     memory-snapshot.py      # keeps each changed Claude Code memory note; --selftest
     debrief-react.py        # record, verify, list and count reactions; --selftest
+    debrief-signals.py      # read a session by rule; adopt drafter-found reactions; landed, rules, principles, echoes; --selftest
     capture-status.py       # one status file for every capture stage; read at session start; --selftest
     projects.example.json   # copy to projects.json: groups and aliases
     repos.example.json      # copy to repos.json
@@ -577,6 +592,7 @@ commands/
   debrief-taste.md          # install alongside — /debrief-taste [topic | add] (the taste layer)
   debrief-react.md          # install alongside — /debrief-react (record one reaction)
   debrief-sentiment.md      # install alongside — /debrief-sentiment [topic] (read the reactions)
+  debrief-signals.md        # install alongside — /debrief-signals [landed|rules|principles] (the signal reports)
 ```
 
 ## Known edges

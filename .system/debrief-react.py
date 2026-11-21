@@ -52,7 +52,7 @@ KINDS = ("kept", "changed", "rejected", "returned-to", "praise", "frustration",
          "correction", "preference", "question")
 SLACK = timedelta(minutes=10)
 ORPHAN_AGE = timedelta(hours=48)
-LABEL_NOTE = "sentiment and kind are the recording agent's reading; the words are the record"
+LABEL_NOTE = "sentiment and kind are a reading, by the recording agent or by the drafter; the words are the record"
 
 # Text the harness injects into a user turn. Same set as extract-material.py.
 INJECTED = (
@@ -488,16 +488,49 @@ def select(recs, base, topic=None, project=None, sentiment=None, since=None, ver
     return out
 
 
-def show(r):
+def reader(r):
+    """Who put the label on: the agent in the session, or the drafter that
+    found the words afterwards (debrief-signals.py adopt)."""
+    return "drafter's reading" if r.get("source") == "drafter" else "agent's reading"
+
+
+def second_readings(base):
+    """{reaction id: the drafter's own sentiment for it}, from sessions/signals/.
+    A second reading never replaces the first. Both are shown."""
+    out = {}
+    sd = os.path.join(base, "sessions", "signals")
+    if not os.path.isdir(sd):
+        return out
+    for name in sorted(os.listdir(sd)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            d = json.load(open(os.path.join(sd, name), encoding="utf-8"))
+        except Exception:
+            continue
+        checks = d.get("label_checks") if isinstance(d, dict) else None
+        if isinstance(checks, dict):
+            for k, v in checks.items():
+                if isinstance(v, dict) and v.get("sentiment") in SENTIMENTS:
+                    out[k] = v["sentiment"]
+    return out
+
+
+def show(r, second=None):
     head = " · ".join(x for x in (
         (r.get("at") or "")[:10], r.get("project") or "?", r.get("about") or "?",
-        "%s (agent's reading)" % r.get("sentiment"), r.get("kind") or "") if x)
+        "%s (%s)" % (r.get("sentiment"), reader(r)), r.get("kind") or "") if x)
     lines = []
     if r.get("verified") is not True:
         why = r.get("why") or "not yet verified"
         lines.append("[NOT CONFIRMED as the human's words: %s]" % why)
     lines.append(head)
     lines.append('  "%s"' % r.get("words"))
+    two = (second or {}).get(r.get("id"))
+    if two and two != r.get("sentiment"):
+        lines.append("  second reading (drafter's): %s. The two readings differ; the words decide." % two)
+    if r.get("source") == "drafter":
+        lines.append("  found by the drafter after the session; the agent in the session did not record it")
     if r.get("before") or r.get("after"):
         lines.append("  before: %s   after: %s" % (r.get("before") or "-", r.get("after") or "-"))
     if r.get("agent_note"):
@@ -513,9 +546,10 @@ def cmd_list(base, topic=None, project=None, sentiment=None, since=None, all_=Fa
     recs = select(load_all(base, all_), base, topic, project, sentiment, since, verified_only=not all_)
     nv = sum(1 for r in recs if r.get("verified") is True)
     print("%d reactions (%d verified). %s." % (len(recs), nv, LABEL_NOTE.capitalize()))
+    second = second_readings(base)
     for r in recs:
         print()
-        print(show(r))
+        print(show(r, second))
     return recs
 
 
@@ -548,6 +582,15 @@ def cmd_summary(base, project=None, since=None):
     pending = len(select(every, base, project=project, since=since, verified_only=False)) - len(recs)
     print("Verified reactions: %d. Not counted (unverified or pending): %d." % (len(recs), pending))
     print("Counts only. The sentiment label is the recording agent's guess; it is not a rule.")
+    found = sum(1 for r in recs if r.get("source") == "drafter")
+    if found:
+        print("Recorded in the session: %d. Found by the drafter afterwards: %d (label: the drafter's guess)."
+              % (len(recs) - found, found))
+    second = second_readings(base)
+    checked = [r for r in recs if r.get("id") in second]
+    if checked:
+        print("Labels the drafter read a second time: %d. Read differently: %d."
+              % (len(checked), sum(1 for r in checked if second[r.get("id")] != r.get("sentiment"))))
     print()
     if project or not reg["groups"]:
         table("By project:", tally(recs, lambda r: r.get("project") or "?"))
@@ -563,7 +606,7 @@ def cmd_summary(base, project=None, since=None):
     table("By week:", tally(recs, lambda r: week(r.get("at"))))
     for s in ("negative", "positive"):
         print()
-        print("Most recent %s (agent's reading):" % s)
+        print("Most recent %s (a reading, not his word for it):" % s)
         top = [r for r in recs if r.get("sentiment") == s][:5]
         if not top:
             print("  none")
@@ -764,6 +807,25 @@ def selftest():
         check("summary: counts by week", "By week:" in s and week(iso(now)) in s)
         s = out_of(cmd_summary, base, project="bot")
         check("summary: project filter", "Verified reactions: 1." in s and "too loud" not in s, s)
+
+        # A reaction the drafter found afterwards, and a second reading of a label.
+        dr = dict(read_jsonl(os.path.join(rdir(base), "aaaa1111.jsonl"))[0][0])
+        dr.update(id="d0d0d0d0d0d0", words="honestly", about="card", sentiment="negative", source="drafter",
+                  project="bot", at=ts(5))
+        append(os.path.join(rdir(base), "aaaa1111.jsonl"), [dr])
+        os.makedirs(os.path.join(base, "sessions", "signals"))
+        json.dump({"label_checks": {found2["id"]: {"sentiment": "mixed", "by": "drafter", "agrees": False},
+                                    found["id"]: {"sentiment": "positive", "by": "drafter", "agrees": True}}},
+                  open(os.path.join(base, "sessions", "signals", "aaaa1111.json"), "w"))
+        open(os.path.join(base, "sessions", "signals", "bad.json"), "w").write("{not json")
+        o = out_of(cmd_list, base)
+        check("list: a reaction the drafter found says so, and its label is the drafter's",
+              "negative (drafter's reading)" in o and "found by the drafter after the session" in o, o)
+        check("list: a differing second reading is shown beside the first",
+              "second reading (drafter's): mixed" in o and o.count("second reading") == 1, o)
+        s = out_of(cmd_summary, base)
+        check("summary: counts what the drafter found and what it read differently",
+              "Found by the drafter afterwards: 1" in s and "read a second time: 2. Read differently: 1." in s, s)
 
         # Concurrent records do not interleave.
         cbase = os.path.join(td, "conc")

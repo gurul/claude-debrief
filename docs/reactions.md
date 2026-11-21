@@ -45,14 +45,16 @@ One JSON object per line:
 | `verified` | verify | `null` in the inbox, then `true` or `false` |
 | `session`, `line`, `lines`, `verified_at` | verify | where the words were found |
 | `why` | verify | why a record is not verified |
+| `source` | adopt | `"drafter"` when the drafter found the words after the session ([signals](signals.md)); absent when the agent in the session recorded them |
 
 ## The rules
 
 1. **The words are the record.** They are stored as given. Outer whitespace is
    trimmed. Nothing else changes: no typo fixes, no paraphrase.
-2. **Labels are the agent's reading.** Sentiment and kind are always shown as
-   "(agent's reading)". A label never becomes a rule, and it is never a reason
-   to hold work back from the human.
+2. **Labels are a reading.** Sentiment and kind are always shown as
+   "(agent's reading)", or "(drafter's reading)" for a reaction the drafter
+   found. A label never becomes a rule, and it is never a reason to hold work
+   back from the human.
 3. **Verification is mechanical.** Only words found in the human's own turns
    count as his. The check is a string match, never a judgment.
 4. **Append-only.** A change of mind is a new record. Verification moves a
@@ -120,6 +122,8 @@ sentiment and kind, the words in quotes, before and after, session and line.
 
 `summary` prints counts by project and sentiment and by ISO week, then the
 five most recent negative and positive verified reactions with their words.
+It also says how many reactions the drafter found afterwards, and how many
+labels the drafter read differently.
 It counts only. It draws no conclusion and writes no rule.
 
 ### Projects and groups
@@ -140,12 +144,21 @@ without `--project` groups its counts under the registry's groups, then an
 Slash commands: `/debrief-react` records one reaction. `/debrief-sentiment`
 wraps `list` and `summary`.
 
+## Reactions nobody recorded, and a second reading
+
+An agent records a reaction only when it stops to do so. After the session,
+`debrief-signals.py` gives the drafter every human turn that no recorded
+reaction covers. The drafter names the ones that judge a piece of work, and
+`debrief-signals.py adopt` runs the same string match on each. The words that
+are found go into `<sid8>.jsonl` with `verified: true` and
+`source: "drafter"`. The rest are kept with `verified: false`.
+
+The drafter also gives its own sentiment for each recorded reaction. The
+first label is never changed. Where the two differ, `list` prints both and
+`summary` counts them. See [signals](signals.md).
+
 ## What is not built
 
-- **The drafter does not read reactions yet.** The session-draft prompt does
-  not yet turn a verified reaction into a Shaping.
-- **No check of the label.** Nothing compares the agent's sentiment label with
-  the words. The label stays the agent's reading.
 - **No return signal.** A reaction says what the human said, not what he did
   later with the piece.
 - **Subagents.** A subagent's record carries the session id its harness sets.

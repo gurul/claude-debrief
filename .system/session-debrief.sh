@@ -225,6 +225,25 @@ verify_reactions() {
   fi
 }
 
+# Signals: debrief-signals.py reads every human turn by rule and leaves
+# sessions/signals/<sid8>.json: which turns no recorded reaction covers, the
+# standing rules the human stated, and what the agent claimed or checked just
+# before he spoke. The drafter gets the block; `adopt` then checks what the
+# drafter found against the human's own turns. A headless session has no
+# human turns, so it is not read. Absent script: no stage.
+read_signals() {
+  local tool="$SYSTEM_DIR/debrief-signals.py" out
+  [ -f "$tool" ] || return 0
+  [ "$(session_origin "$TRANSCRIPT")" = headless ] && return 0
+  out=$(python3 "$tool" read --transcript "$TRANSCRIPT" --session "$SESSION_ID" --dir "$DEBRIEF_DIR" 2>&1)
+  case "$out" in
+    "signals: FAILED"*|"")
+      log "signals: FAILED for ${SESSION_ID:0:8}: ${out//$'\n'/ | }"
+      mark signals fail "${out:-no output}" ;;
+    *) log "signals: ${SESSION_ID:0:8} ${out#signals: }"; mark signals ok ;;
+  esac
+}
+
 # Who wrote the prompts. The first user record's `entrypoint` names the
 # client: `cli` and `claude-desktop` are a person at a keyboard; `sdk-cli`
 # (claude -p) and `sdk-ts` (the agent SDK) are a script. A record that says
@@ -285,14 +304,15 @@ SYNTHETIC: headless"
   if [ -s "$reactions" ]; then
     verified="$(python3 - "$reactions" <<'PY' 2>/dev/null
 import json, sys
-keep = ("words", "about", "sentiment", "kind", "before", "after", "project", "at")
+keep = ("id", "words", "about", "sentiment", "kind", "before", "after", "project", "at")
 n = 0
 for line in open(sys.argv[1], errors="replace"):
     try:
         d = json.loads(line)
     except Exception:
         continue
-    if d.get("verified") is True and d.get("words") and n < 60:
+    # What the drafter itself found on an earlier attempt is not handed back to it.
+    if d.get("verified") is True and d.get("words") and d.get("source") != "drafter" and n < 60:
         print(json.dumps({k: d.get(k) for k in keep}, ensure_ascii=False))
         n += 1
 PY
@@ -302,6 +322,13 @@ PY
 REACTIONS: $reactions
 VERIFIED REACTIONS (one JSON object per line):
 $verified"
+  # What the transcript shows by rule: turns no reaction covers, stated rules,
+  # and what the agent claimed or checked before each turn.
+  local signals=""
+  [ -f "$SYSTEM_DIR/debrief-signals.py" ] && [ "$(session_origin "$transcript")" != headless ] \
+    && signals="$(python3 "$SYSTEM_DIR/debrief-signals.py" prompt --session "$sid" --dir "$DEBRIEF_DIR" 2>/dev/null)"
+  [ -n "$signals" ] && prompt="$prompt
+$signals"
   # Opt-in auto-curation (DEBRIEF_AUTO_CURATE=1): once the draft lands,
   # curate-day.sh folds it into its day with no review step. If that never
   # runs (shutdown, crash), debrief-daemon.sh catches the day up.
@@ -318,8 +345,14 @@ $verified"
         python3 "$5/capture-status.py" mark draft fail "drafter exited rc=$rc, no draft" >/dev/null 2>&1
       fi
     fi
+    # The reactions the drafter found count only when their words are in a
+    # human turn: adopt checks that before the curator reads the draft.
+    if [ "$state" = present ] && [ -f "$5/debrief-signals.py" ] && [ -f "$9/sessions/signals/${3:0:8}.json" ]; then
+      got="$(python3 "$5/debrief-signals.py" adopt --draft "$4" --transcript "$8" --session "$3" --dir "$9" 2>&1)"
+      printf "%s %s for %s\n" "$(date "+%Y-%m-%dT%H:%M:%S%z")" "${got:-signals: adopt printed nothing}" "${3:0:8}" >>"$2"
+    fi
     [ "$state" = present ] && [ "$7" = 1 ] && bash "$5/curate-day.sh" "$6"
-  ' _ "$prompt" "$LOG" "$sid" "$out" "$SYSTEM_DIR" "${ended%%T*}" "${DEBRIEF_AUTO_CURATE:-}" >/dev/null 2>&1 &
+  ' _ "$prompt" "$LOG" "$sid" "$out" "$SYSTEM_DIR" "${ended%%T*}" "${DEBRIEF_AUTO_CURATE:-}" "$transcript" "$DEBRIEF_DIR" >/dev/null 2>&1 &
 }
 
 # --- Self-repair sweep -------------------------------------------------
@@ -476,6 +509,7 @@ archive_raw
 keep_material
 keep_memory
 verify_reactions
+read_signals
 SYNTHETIC="$(session_origin "$TRANSCRIPT")"
 
 LINES=$(wc -l <"$TRANSCRIPT" | tr -d ' ')
