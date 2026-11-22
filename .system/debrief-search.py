@@ -745,6 +745,10 @@ class EmbedUnavailable(Exception):
     pass
 
 
+class EmbedTimeout(EmbedUnavailable):
+    """The embedder is there but did not answer in time (slow, not down)."""
+
+
 def unit(v, dim):
     """Matryoshka truncation: keep the leading dims, then re-normalize."""
     v = v[:dim]
@@ -765,6 +769,8 @@ def ollama_embed(texts, timeout=FILL_TIMEOUT):
     except urllib.error.HTTPError as e:
         raise EmbedUnavailable(f"{EMBED_MODEL}: HTTP {e.code} {e.read()[:120]!r}")
     except (urllib.error.URLError, OSError) as e:
+        if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+            raise EmbedTimeout(f"no answer from {EMBED_URL} in {timeout:.0f}s")
         raise EmbedUnavailable(f"no embedder at {EMBED_URL} ({e})")
     vecs = out.get("embeddings")
     if not vecs or len(vecs) != len(texts):
@@ -840,7 +846,19 @@ def chunk_vectors(debrief, db, embed, dim=None, batch=16, budget=None):
             break
         part = missing[i : i + batch]
         timeout = FILL_TIMEOUT if deadline is None else max(1.0, deadline - time.monotonic())
-        for (k, _), v in zip(part, _embed(embed, [p for _, p in part], timeout)):
+        try:
+            vecs = _embed(embed, [p for _, p in part], timeout)
+        except EmbedTimeout:
+            # A batch that outlasts the search budget is a slow embedder, not a
+            # missing one. Hand the rest off like any other leftover: raising
+            # here turned the whole search keyword-only and started no
+            # background run, so every later search failed the same way
+            # (2026-11-21).
+            if deadline is None:
+                raise
+            left = len(missing) - i
+            break
+        for (k, _), v in zip(part, vecs):
             blob = array.array("f", unit(v, dim)).tobytes()
             cache.execute("INSERT OR REPLACE INTO vec VALUES (?, ?)", (k, blob))
             have[k] = blob
@@ -2367,6 +2385,31 @@ def cmd_selftest():
         total = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
         check(f"budget: a search embeds what fits ({len(part)} of {total}) and hands off the rest",
               0 < len(part) < total and fills == [td])
+
+        # A batch that outlasts the budget is handed off too: the search keeps
+        # the vectors it has, and the background run is started (2026-11-21).
+        fills = []
+        globals()["fill_in_background"] = fills.append
+
+        def timing_out(texts, timeout=None):
+            raise EmbedTimeout("no answer")
+
+        try:
+            kept = chunk_vectors(td, db, timing_out, 32, budget=0.2)
+            handed = True
+        except EmbedUnavailable:
+            kept, handed = {}, False
+        try:
+            chunk_vectors(td, db, timing_out, 32)
+            unbudgeted_raises = False
+        except EmbedTimeout:
+            unbudgeted_raises = True
+        finally:
+            globals()["fill_in_background"] = saved_fill
+        check("budget: a batch that times out is handed off, not a failed search",
+              handed and len(kept) == len(part) and fills == [td])
+        check("budget: with no budget (the background run) a timeout still raises",
+              unbudgeted_raises)
 
     # The structure tables (2026-11-09): dates, sessions, glossary, threads.
     import contextlib
