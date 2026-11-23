@@ -57,6 +57,11 @@ gitignored when the store is a checkout of this repo.
   full size in bytes, and the last line of the patch says it was cut.
 - `status` is `ok`, `no_start_snapshot` (a Stop came with no snapshot from the
   start of the turn; `file` is null), or `no_redactor` (see below).
+- A `no_start_snapshot` row has two causes, and `note` says which. The prompt
+  hook tried to snapshot the repo and gave up: that is a capture failure, and
+  the session-start line reports it. Or the prompt ran outside the repo and
+  the session entered it during the turn (`entered_mid_turn` is true): no
+  snapshot could exist, the turn has no patch, and it is not a failure.
 
 ### What a between patch means
 

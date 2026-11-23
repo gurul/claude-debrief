@@ -624,9 +624,17 @@ def stop_repo(git, sid, info, bg):
     except GiveUp:
         others = {}
     if not base:
-        why = "no start snapshot for this turn" + (" (%s)" % start_failed if start_failed else "")
-        record_status(sid, info, "agent", "no_start_snapshot", tree, {"note": why})
-        mark("fail", why)
+        if start_failed:
+            # The prompt hook tried to snapshot this repo and gave up. That is a capture failure.
+            why = "no start snapshot for this turn (%s)" % start_failed
+            record_status(sid, info, "agent", "no_start_snapshot", tree, {"note": why})
+            mark("fail", why)
+            return
+        # No prompt of this session ran in this repo: the session entered it during the turn.
+        # Nothing could have been snapshotted, so the turn has no patch and the capture did not fail.
+        why = "no start snapshot for this turn (the session entered this repo after the prompt)"
+        record_status(sid, info, "agent", "no_start_snapshot", tree, {"note": why, "entered_mid_turn": True})
+        mark("ok", why)
         return
     if base == tree:
         mark("ok", "turn changed no design file")
@@ -904,6 +912,48 @@ def _selftest(td, check, fails):
     i3 = index(S3)
     check("stop with no start snapshot is recorded", len(i3) == 1 and i3[0]["status"] == "no_start_snapshot"
           and i3[0]["file"] is None, i3)
+
+    # A session that entered the repo after its prompt has no snapshot to miss: not a capture failure.
+    # A prompt that tried to snapshot and gave up is one.
+    def turns_status(want_error):
+        sp = os.path.join(ddir, ".system", "capture_status.json")
+        end, got = time.time() + 10, {}
+        while time.time() < end:
+            try:
+                got = json.load(open(sp)).get("turns", {})
+            except (OSError, ValueError):
+                got = {}
+            if want_error in (got.get("last_error") or "") and got.get("failed_since_ok"):
+                break
+            time.sleep(0.1)
+        return got
+
+    if os.path.isfile(os.path.join(HERE, "capture-status.py")):
+        sdir = os.path.join(ddir, ".system", "turns", "state")
+        key = [n for n in os.listdir(sdir) if n.startswith(S1 + "-") and n.endswith(".json")][0][len(S1) + 1:-5]
+        S3b = "cccc333b-0000-0000-0000-00000000003b"
+        w(os.path.join(sdir, "%s-%s.json" % (S3b, key)), json.dumps(
+            {"top": repo, "start_tree": None, "agent_base": None, "start_failed": "git write-tree timed out",
+             "open": True, "prompts": 1}))
+        run("Stop", S3b, repo)
+        got = turns_status("git write-tree timed out")
+        check("stop after a failed start snapshot is a capture failure",
+              got.get("failed_since_ok") == 1 and "git write-tree timed out" in (got.get("last_error") or ""), got)
+        S3c = "cccc333c-0000-0000-0000-00000000003c"
+        run("Stop", S3c, repo)
+        i3c = index(S3c)
+        end, got = time.time() + 10, {}
+        while time.time() < end:
+            try:
+                got = json.load(open(os.path.join(ddir, ".system", "capture_status.json"))).get("turns", {})
+            except (OSError, ValueError):
+                got = {}
+            if not got.get("failed_since_ok"):
+                break
+            time.sleep(0.1)
+        check("stop in a repo entered after the prompt is recorded and is not a capture failure",
+              len(i3c) == 1 and i3c[0]["status"] == "no_start_snapshot" and i3c[0].get("entered_mid_turn") is True
+              and got.get("failed_since_ok") == 0, (i3c, got))
 
     # Long patch and many files are cut and counted.
     S4 = "dddd4444-0000-0000-0000-000000000004"
